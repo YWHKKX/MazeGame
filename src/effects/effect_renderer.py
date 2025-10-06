@@ -9,6 +9,7 @@ from typing import List, Tuple, Optional
 from .particle_system import ParticleSystem
 from .projectile_system import ProjectileSystem
 from .area_effect_system import AreaEffectSystem
+from src.utils.logger import game_logger
 
 
 class EffectRenderer:
@@ -46,14 +47,23 @@ class EffectRenderer:
             if hasattr(effect, 'render'):
                 effect.render(screen)
 
-    def render_all(self, screen: pygame.Surface):
+    def render_all(self, screen: pygame.Surface, ui_scale: float = 1.0):
         """按层级顺序渲染所有特效"""
+        if screen is None:
+            return screen
+
         # 按层级ID排序渲染
         for layer_id in sorted(self.effects_by_layer.keys()):
             effects = self.effects_by_layer[layer_id]
             for effect in effects:
                 if hasattr(effect, 'render') and not getattr(effect, 'finished', False):
-                    effect.render(screen)
+                    # 检查effect的render方法是否支持ui_scale参数
+                    if 'ui_scale' in effect.render.__code__.co_varnames:
+                        effect.render(screen, ui_scale)
+                    else:
+                        effect.render(screen)
+
+        return screen
 
     def clear_layer(self, layer: str):
         """清空指定层级"""
@@ -123,13 +133,22 @@ class ScreenShake:
 
     def apply_to_surface(self, surface: pygame.Surface) -> pygame.Surface:
         """将震动效果应用到表面"""
-        if not self.active:
+        if not self.active or surface is None:
             return surface
 
-        # 创建带偏移的新表面
-        offset_surface = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-        offset_surface.blit(surface, (self.offset_x, self.offset_y))
-        return offset_surface
+        try:
+            # 创建带偏移的新表面
+            offset_surface = pygame.Surface(
+                surface.get_size(), pygame.SRCALPHA)
+            if offset_surface is None:
+                game_logger.info("❌ 创建震动Surface失败")
+                return surface
+
+            offset_surface.blit(surface, (self.offset_x, self.offset_y))
+            return offset_surface
+        except Exception as e:
+            game_logger.info(f"❌ 应用屏幕震动失败: {e}")
+            return surface
 
 
 class DamageNumberRenderer:
@@ -180,7 +199,7 @@ class DamageNumberRenderer:
             if damage_info["life"] <= 0:
                 self.damage_numbers.remove(damage_info)
 
-    def render(self, screen: pygame.Surface):
+    def render(self, screen: pygame.Surface, ui_scale: float = 1.0):
         """渲染伤害数字"""
         if not self.font or not pygame.font.get_init():
             return
@@ -199,15 +218,26 @@ class DamageNumberRenderer:
             else:
                 color = (255, 255, 255)  # 白色
 
+            # 应用UI缩放
+            scaled_x = int(damage_info["x"] * ui_scale)
+            scaled_y = int(damage_info["y"] * ui_scale)
+            scaled_font_size = max(12, int(24 * ui_scale))
+
+            # 创建缩放后的字体
+            try:
+                scaled_font = pygame.font.Font(None, scaled_font_size)
+            except:
+                scaled_font = self.font
+
             # 渲染文字
-            text = self.font.render(str(damage_info["damage"]), True, color)
+            text = scaled_font.render(str(damage_info["damage"]), True, color)
 
             # 应用透明度
             if damage_info["alpha"] < 255:
                 text.set_alpha(damage_info["alpha"])
 
             # 绘制到屏幕
-            screen.blit(text, (int(damage_info["x"]), int(damage_info["y"])))
+            screen.blit(text, (scaled_x, scaled_y))
 
     def clear(self):
         """清空所有伤害数字"""
@@ -222,17 +252,30 @@ class EffectRendererManager:
         self.screen_shake = ScreenShake()
         self.damage_renderer = DamageNumberRenderer()
 
-    def render_all(self, screen: pygame.Surface):
+    def render_all(self, screen: pygame.Surface, ui_scale: float = 1.0):
         """渲染所有特效"""
+        if screen is None:
+            game_logger.info(
+                "❌ EffectRendererManager.render_all() 收到 None screen，跳过渲染")
+            return screen
+
         # 渲染特效层级
-        self.renderer.render_all(screen)
+        self.renderer.render_all(screen, ui_scale)
 
         # 渲染伤害数字
-        self.damage_renderer.render(screen)
+        self.damage_renderer.render(screen, ui_scale)
 
         # 应用屏幕震动
         if self.screen_shake.active:
-            screen = self.screen_shake.apply_to_surface(screen)
+            try:
+                screen = self.screen_shake.apply_to_surface(screen)
+                if screen is None:
+                    game_logger.info(
+                        "❌ ScreenShake.apply_to_surface() 返回 None")
+                    return screen
+            except Exception as e:
+                game_logger.info(f"❌ 屏幕震动应用失败: {e}")
+                return screen
 
         return screen
 

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from src.core.constants import GameConstants
 from src.core.enums import TileType
 from .tile import GameTile
+from src.utils.logger import game_logger
 
 
 class BuildingType(Enum):
@@ -23,8 +24,8 @@ class BuildingType(Enum):
     # 基础设施建筑
     DUNGEON_HEART = "dungeon_heart"      # 地牢之心
     TREASURY = "treasury"                # 金库
-    LAIR = "lair"                       # 巢穴
-    ADVANCED_GOLD_MINE = "advanced_gold_mine"  # 高级金矿
+    ORC_LAIR = "orc_lair"                # 兽人巢穴
+    DEMON_LAIR = "demon_lair"            # 恶魔巢穴
 
     # 功能性建筑
     TRAINING_ROOM = "training_room"      # 训练室
@@ -35,6 +36,7 @@ class BuildingType(Enum):
     PRISON = "prison"                    # 监狱
     TORTURE_CHAMBER = "torture_chamber"  # 刑房
     ARROW_TOWER = "arrow_tower"          # 箭塔
+    ARCANE_TOWER = "arcane_tower"        # 奥术塔
     DEFENSE_FORTIFICATION = "defense_fortification"  # 防御工事
 
     # 魔法建筑
@@ -57,7 +59,6 @@ class BuildingStatus(Enum):
     UNDER_CONSTRUCTION = "under_construction"  # 建造中
     COMPLETED = "completed"             # 已完成
     UPGRADING = "upgrading"             # 升级中
-    DAMAGED = "damaged"                 # 损坏
     DESTROYED = "destroyed"             # 摧毁
 
 
@@ -98,13 +99,22 @@ class Building(GameTile):
         self.building_type = building_type
         self.config = config
 
+        # 坐标系统：区分瓦片坐标和像素坐标
+        self.tile_x = x  # 瓦片坐标
+        self.tile_y = y  # 瓦片坐标
+        self.x = x * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2  # 像素坐标（瓦片中心）
+        self.y = y * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2  # 像素坐标（瓦片中心）
+
         # 基础属性
         self.name = config.name
         self.category = config.category
         self.health = config.health
         self.max_health = config.health
         self.armor = config.armor
-        self.size = config.size
+        # 建筑的size用于物理碰撞和击退，取最大边长作为单个数值
+        self.size = max(config.size) if isinstance(
+            config.size, (tuple, list)) else config.size
+        self.building_size = config.size  # 保留原始的建筑占地面积
         self.color = config.color
         self.level = config.level
 
@@ -118,6 +128,9 @@ class Building(GameTile):
         self.construction_cost_gold = config.cost_gold
         self.construction_cost_crystal = config.cost_crystal
         self.construction_cost_paid = 0  # 已支付的金币数量
+
+        # 建造时间信息
+        self.build_time = config.build_time
 
         # 工程师管理
         self.assigned_engineers = []       # 分配的工程师列表
@@ -145,7 +158,26 @@ class Building(GameTile):
         # 建筑管理器引用（用于清理缓存等操作）
         self.building_manager = None
 
-    def update(self, delta_time: float, game_state, engineers: List = None) -> Dict[str, Any]:
+        # 阵营系统 - 建筑默认属于英雄阵营
+        self.faction = "heroes"  # 建筑属于英雄阵营
+        self.is_combat_unit = False  # 建筑不是战斗单位（除了防御塔）
+
+    def get_tile_position(self) -> Tuple[int, int]:
+        """获取瓦片坐标"""
+        return (self.tile_x, self.tile_y)
+
+    def get_pixel_position(self) -> Tuple[int, int]:
+        """获取像素坐标"""
+        return (self.x, self.y)
+
+    def set_tile_position(self, tile_x: int, tile_y: int):
+        """设置瓦片坐标并更新像素坐标"""
+        self.tile_x = tile_x
+        self.tile_y = tile_y
+        self.x = tile_x * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2
+        self.y = tile_y * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2
+
+    def update(self, delta_time: float, game_state, engineers: List = None, workers: List = None) -> Dict[str, Any]:
         """
         更新建筑状态
 
@@ -153,12 +185,13 @@ class Building(GameTile):
             delta_time: 时间增量（毫秒）
             game_state: 游戏状态
             engineers: 可用工程师列表
+            workers: 可用工人列表
 
         Returns:
             Dict: 更新结果信息
         """
         current_time = time.time()
-        delta_seconds = delta_time / 1000.0
+        delta_seconds = delta_time  # delta_time 已经是秒单位，不需要转换
 
         result = {
             'status_changed': False,
@@ -176,7 +209,8 @@ class Building(GameTile):
 
         # 更新正常运营
         elif self.status == BuildingStatus.COMPLETED and self.is_active:
-            production = self._update_production(delta_seconds, game_state)
+            production = self._update_production(
+                delta_seconds, game_state, workers)
             if production:
                 result['production'] = production
 
@@ -227,6 +261,14 @@ class Building(GameTile):
         engineers_released = len(self.assigned_engineers)
         self.assigned_engineers.clear()
 
+        # 记录建筑完成日志
+        from src.utils.logger import game_logger
+        game_logger.info(f"🏗️ 建筑 {self.name} 建造完成！")
+        game_logger.info(f"   📍 位置: ({self.x}, {self.y})")
+        game_logger.info(f"   🏷️ 类型: {self.building_type.value}")
+        game_logger.info(f"   💚 血量: {self.health}/{self.max_health}")
+        game_logger.info(f"   🔓 释放工程师: {engineers_released} 个")
+
         return {
             'completed': True,
             'engineers_released': engineers_released,
@@ -261,6 +303,26 @@ class Building(GameTile):
 
         return True
 
+    def _calculate_armor_reduction(self, damage: int) -> int:
+        """
+        统一的护甲减免计算API
+
+        使用线性护甲减免公式：
+        实际伤害 = max(1, 原始伤害 - 护甲值)
+
+        Args:
+            damage: 原始伤害值
+
+        Returns:
+            int: 应用护甲减免后的实际伤害
+        """
+        if not hasattr(self, 'armor') or self.armor <= 0:
+            return damage
+
+        # 线性护甲减免：每点护甲减少1点伤害
+        actual_damage = max(1, damage - self.armor)
+        return actual_damage
+
     def take_damage(self, damage: int) -> Dict[str, Any]:
         """
         受到伤害
@@ -271,9 +333,18 @@ class Building(GameTile):
         Returns:
             Dict: 伤害结果
         """
-        # 计算护甲减免
-        actual_damage = max(1, damage - self.armor)
+        game_logger.info(f"🏗️ 建筑 {self.name} 受到 {damage} 点伤害")
+        game_logger.info(
+            f"🏗️ 当前状态: {self.status.value}, 生命值: {self.health}/{self.max_health}")
+        game_logger.info(f"🏗️ 护甲值: {self.armor}")
+
+        # 使用统一的护甲减免计算
+        actual_damage = self._calculate_armor_reduction(damage)
+        game_logger.info(f"🏗️ 护甲减免后实际伤害: {actual_damage}")
+
+        old_health = self.health
         self.health -= actual_damage
+        self.health = max(0, self.health)  # 确保生命值不为负数
 
         result = {
             'damage_taken': actual_damage,
@@ -281,25 +352,25 @@ class Building(GameTile):
             'destroyed': False
         }
 
+        game_logger.info(f"🏗️ 伤害后生命值: {old_health} -> {self.health}")
+
         if self.health <= 0:
             self.health = 0
             self.status = BuildingStatus.DESTROYED
             self.is_active = False
             result['destroyed'] = True
+            game_logger.info(f"💀 建筑 {self.name} 被摧毁！")
 
-        elif self.health < self.max_health * 0.5:
-            self.status = BuildingStatus.DAMAGED
-            self.efficiency = 0.5  # 损坏时效率降低
-
+        game_logger.info(f"🏗️ 返回结果: {result}")
         return result
 
-    def repair(self, repair_amount: int, engineer_gold: int = 0) -> Dict[str, Any]:
+    def repair(self, gold_amount: int, engineer_gold: int = 0) -> Dict[str, Any]:
         """
         修理建筑 - 由工程师携带金币进行修复
 
         Args:
-            repair_amount: 修理量
-            engineer_gold: 工程师携带的金币数量
+            gold_amount: 工程师投入的金币数量
+            engineer_gold: 工程师携带的总金币数量
 
         Returns:
             Dict: 修理结果
@@ -307,34 +378,48 @@ class Building(GameTile):
         if self.status == BuildingStatus.DESTROYED:
             return {'repaired': False, 'reason': 'building_destroyed'}
 
-        # 计算修复费用：每点生命值修复需要花费建造成本的0.1%金币
-        repair_cost_per_hp = self.config.cost_gold * 0.001  # 建造成本的0.1%
-        total_repair_cost = int(repair_amount * repair_cost_per_hp)
+        if gold_amount <= 0:
+            return {'repaired': False, 'reason': 'invalid_amount', 'message': '投入金币数量必须大于0'}
+
+        # 计算修复费用：每点生命值修复需要花费0.2金币
+        repair_cost_per_hp = 0.2  # 固定每点生命值0.2金币
+
+        # 根据金币数量计算可以修复的生命值
+        hp_to_repair = int(gold_amount / repair_cost_per_hp)
+        hp_needed = self.max_health - self.health
+
+        # 实际修复的生命值不能超过需要的生命值
+        actual_hp_to_repair = min(hp_to_repair, hp_needed)
+
+        # 计算实际需要的金币
+        actual_repair_cost = int(actual_hp_to_repair * repair_cost_per_hp)
 
         # 检查工程师是否有足够的金币
-        if engineer_gold < total_repair_cost:
+        if engineer_gold < actual_repair_cost:
             return {
                 'repaired': False,
                 'reason': 'insufficient_gold',
-                'required_gold': total_repair_cost,
+                'required_gold': actual_repair_cost,
                 'available_gold': engineer_gold
             }
 
+        # 执行修复
         old_health = self.health
-        self.health = min(self.max_health, self.health + repair_amount)
+        self.health = min(self.max_health, self.health + actual_hp_to_repair)
         actual_repair = self.health - old_health
 
         # 检查是否修复完成
-        if self.health >= self.max_health * 0.5 and self.status == BuildingStatus.DAMAGED:
+        if self.health >= self.max_health:
             self.status = BuildingStatus.COMPLETED
             self.efficiency = 1.0
 
         return {
             'repaired': True,
             'repair_amount': actual_repair,
-            'repair_cost': total_repair_cost,
+            'repair_cost': actual_repair_cost,
             'health': self.health,
-            'max_health': self.max_health
+            'max_health': self.max_health,
+            'message': f'修复了 {actual_repair} 点生命值，花费 {actual_repair_cost} 金币'
         }
 
     def activate_special_ability(self, ability_name: str, target=None) -> Dict[str, Any]:
@@ -433,7 +518,7 @@ class Building(GameTile):
 
         # 如果工程师在相关状态，将其状态改为空闲
         if hasattr(engineer, 'status'):
-            from src.entities.goblin_engineer import EngineerStatus
+            from src.entities.monster.goblin_engineer import EngineerStatus
             old_status = engineer.status
             if engineer.status in [
                 EngineerStatus.MOVING_TO_SITE,
@@ -656,6 +741,187 @@ class Building(GameTile):
         """
         self.building_manager = building_manager
 
+    def get_status_for_indicator(self) -> str:
+        """
+        获取建筑状态用于状态指示器
+
+        Returns:
+            str: 状态名称
+        """
+        from src.core.constants import GameConstants
+
+        # 如果建筑未完成，返回未完成状态
+        if self.status != BuildingStatus.COMPLETED:
+            return GameConstants.BUILDING_STATUS_INCOMPLETE
+
+        # 如果建筑被摧毁，返回摧毁状态
+        if self.status == BuildingStatus.DESTROYED:
+            return GameConstants.BUILDING_STATUS_DESTROYED
+
+        # 如果建筑需要修复（生命值不满）
+        if self.health < self.max_health:
+            return GameConstants.BUILDING_STATUS_NEEDS_REPAIR
+
+        # 如果建筑完成且正常
+        return GameConstants.BUILDING_STATUS_COMPLETED
+
+    def get_status(self) -> str:
+        """
+        获取建筑状态
+
+        Returns:
+            str: 状态名称
+        """
+        from src.core.constants import GameConstants
+
+        # 如果建筑未完成，返回未完成状态
+        if self.status != BuildingStatus.COMPLETED:
+            return GameConstants.BUILDING_STATUS_INCOMPLETE
+
+        # 如果建筑被摧毁，返回摧毁状态
+        if self.status == BuildingStatus.DESTROYED:
+            return GameConstants.BUILDING_STATUS_DESTROYED
+
+        # 如果建筑需要修复（生命值不满）
+        if self.health < self.max_health:
+            return GameConstants.BUILDING_STATUS_NEEDS_REPAIR
+
+        # 如果建筑完成且正常
+        return GameConstants.BUILDING_STATUS_COMPLETED
+
+    def get_engineer_task_type(self) -> str:
+        """
+        获取工程师任务类型
+
+        Returns:
+            str: 任务类型 ('construction', 'repair', 'reload', 'gold_deposit', 'idle')
+        """
+        # 如果建筑未完成，需要建造
+        if self.status in [BuildingStatus.PLANNING, BuildingStatus.UNDER_CONSTRUCTION]:
+            return 'construction'
+        elif self.status == BuildingStatus.COMPLETED:
+            # 已完成的建筑，优先检查是否需要弹药装填
+            if (hasattr(self, 'can_accept_ammunition') and self.can_accept_ammunition()):
+                return 'reload'
+            # 其次检查是否需要金币存入
+            elif (hasattr(self, 'can_accept_gold') and self.can_accept_gold()):
+                return 'gold_deposit'
+            # 再次检查是否需要修复（生命值不满）
+            elif self.health < self.max_health:
+                return 'repair'
+            else:
+                return 'idle'  # 已完成且不需要任何维护的建筑
+        else:
+            return 'construction'  # 默认为建造
+
+    def accept_gold_deposit(self, engineer, gold_amount: int) -> Dict[str, Any]:
+        """
+        接受工程师的金币存储（永久存储）
+
+        Args:
+            engineer: 工程师对象
+            gold_amount: 金币数量
+
+        Returns:
+            Dict: 存储结果
+        """
+        # 默认实现：不支持金币存储
+        return {
+            'deposited': False,
+            'reason': 'not_supported',
+            'message': f'{self.name} 不支持金币存储功能'
+        }
+
+    def accept_gold_investment(self, engineer, gold_amount: int) -> Dict[str, Any]:
+        """
+        接受工程师的金币投入（临时存储，用于触发功能）
+
+        Args:
+            engineer: 工程师对象
+            gold_amount: 金币数量
+
+        Returns:
+            Dict: 投入结果
+        """
+        # 默认实现：不支持金币投入
+        return {
+            'deposited': False,
+            'reason': 'not_supported',
+            'message': f'{self.name} 不支持金币投入功能'
+        }
+
+    def accept_ammunition_reload(self, engineer, gold_amount: int) -> Dict[str, Any]:
+        """
+        接受工程师的弹药装填
+
+        Args:
+            engineer: 工程师对象
+            gold_amount: 金币数量
+
+        Returns:
+            Dict: 装填结果
+        """
+        # 默认实现：不支持弹药装填
+        return {
+            'deposited': False,
+            'reason': 'not_supported',
+            'message': f'{self.name} 不支持弹药装填功能'
+        }
+
+    def accept_repair_gold(self, engineer, gold_amount: int) -> Dict[str, Any]:
+        """
+        接受工程师的修复金币投入 - 通用实现
+
+        Args:
+            engineer: 工程师对象
+            gold_amount: 金币数量
+
+        Returns:
+            Dict: 修复投入结果
+        """
+        if self.health >= self.max_health:
+            return {
+                'deposited': False,
+                'reason': 'already_full_health',
+                'message': f'{self.name}生命值已满，无需修复'
+            }
+
+        # 计算修复需要的金币（1金币回复5血量）
+        health_to_repair = gold_amount * 5
+        max_repair = self.max_health - self.health
+        actual_repair = min(health_to_repair, max_repair)
+        actual_cost = int(actual_repair / 5)
+
+        if actual_repair > 0:
+            self.health += actual_repair
+            return {
+                'deposited': True,
+                'amount_deposited': actual_cost,
+                'health_repaired': actual_repair,
+                'current_health': self.health,
+                'max_health': self.max_health,
+                'message': f'修复了 {actual_repair} 点生命值 (当前: {self.health}/{self.max_health})'
+            }
+        else:
+            return {
+                'deposited': False,
+                'reason': 'no_repair_needed',
+                'message': f'{self.name}生命值已满，无需修复'
+            }
+
+    def _get_attack_effect_type(self) -> str:
+        # 建筑攻击特效映射
+        building_attack_effects = {
+            'arrow_tower': 'tower_arrow_shot',
+            'arcane_tower': 'tower_magic_impact',
+            'dungeon_heart': 'impact_explosion',
+            'treasury': 'impact_explosion',
+            'magic_altar': 'magic_impact',
+            'orc_lair': 'impact_explosion',
+            'demon_lair': 'magic_impact'
+        }
+        return building_attack_effects.get(self.building_type.value, 'impact_explosion')
+
     def get_info(self) -> Dict[str, Any]:
         """
         获取建筑信息
@@ -733,7 +999,7 @@ class Building(GameTile):
             result['status_changed'] = True
             result['events'].append(f"{self.name} 升级到 {self.upgrade_level} 级！")
 
-    def _update_production(self, delta_seconds: float, game_state) -> Dict[str, Any]:
+    def _update_production(self, delta_seconds: float, game_state, workers: List = None) -> Dict[str, Any]:
         """更新生产（由子类重写）"""
         return {}
 
@@ -742,6 +1008,36 @@ class Building(GameTile):
         # 取消维持费用，建筑不再需要持续消耗金币
         # 修复费用将在修复时单独计算
         pass
+
+    def can_accept_gold(self) -> bool:
+        """
+        检查建筑是否可以接受金币
+
+        Returns:
+            bool: 是否可以接受金币
+        """
+        # 检查建筑是否支持金币存入
+        return hasattr(self, 'deposit_gold') and callable(getattr(self, 'deposit_gold'))
+
+    def get_gold_capacity_info(self) -> Dict[str, Any]:
+        """
+        获取建筑的金币容量信息
+
+        Returns:
+            Dict: 容量信息
+        """
+        if hasattr(self, 'gold_storage_capacity'):
+            return {
+                'has_capacity': True,
+                'capacity': self.gold_storage_capacity,
+                'stored': getattr(self, 'stored_gold', 0),
+                'available': self.gold_storage_capacity - getattr(self, 'stored_gold', 0)
+            }
+        else:
+            return {
+                'has_capacity': False,
+                'message': f'{self.name} 没有金币存储容量'
+            }
 
     def _update_ability_cooldowns(self, delta_seconds: float):
         """更新特殊能力冷却时间"""
@@ -756,6 +1052,13 @@ class Building(GameTile):
         # 移除已冷却完成的能力
         for ability in expired_abilities:
             del self.ability_cooldowns[ability]
+
+    def attack_target(self, target) -> Dict[str, Any]:
+        """攻击目标（由子类重写）"""
+        return {}
+
+    def can_attack_target(self, target) -> bool:
+        return False
 
     def _complete_upgrade(self):
         """完成升级"""
@@ -796,7 +1099,7 @@ class Building(GameTile):
         """执行特殊能力（由子类重写）"""
         return {'activated': False, 'reason': 'not_implemented'}
 
-    def render(self, screen: pygame.Surface, screen_x: int, screen_y: int, tile_size: int, font_manager=None, building_ui=None):
+    def render(self, screen: pygame.Surface, screen_x: int, screen_y: int, tile_size: int, font_manager=None, building_ui=None, ui_scale: float = 1.0):
         """
         渲染建筑外观 - 委托给BuildingUI处理
 
@@ -807,11 +1110,12 @@ class Building(GameTile):
             tile_size: 瓦片大小
             font_manager: 字体管理器（可选）
             building_ui: BuildingUI实例（可选）
+            ui_scale: UI缩放倍数
         """
         if building_ui:
             # 使用BuildingUI的渲染方法
             building_ui.render_building_appearance(
-                screen, self.building_type.value, screen_x, screen_y, tile_size, None)
+                screen, self.building_type.value, screen_x, screen_y, tile_size, None, ui_scale)
         else:
             # 回退到简单渲染
             self._render_simple_appearance(
@@ -823,7 +1127,6 @@ class Building(GameTile):
         building_colors = {
             'treasury': (255, 215, 0),  # 金库 - 金色
             'dungeon_heart': (139, 0, 0),  # 地牢之心 - 深红色
-            'lair': (101, 67, 33),  # 巢穴 - 深棕色
             'arrow_tower': (169, 169, 169),  # 箭塔 - 石灰色
             'training_room': (112, 128, 144),  # 训练室 - 灰蓝色
             'library': (25, 25, 112),   # 图书馆 - 深蓝色
@@ -834,7 +1137,6 @@ class Building(GameTile):
             'magic_altar': (138, 43, 226),  # 魔法祭坛 - 紫色
             'shadow_temple': (72, 61, 139),  # 暗影神殿 - 暗紫色
             'magic_research_institute': (65, 105, 225),  # 魔法研究院 - 蓝色
-            'advanced_gold_mine': (255, 215, 0),  # 高级金矿 - 金黄色
         }
 
         color = building_colors.get(
@@ -849,7 +1151,7 @@ class Building(GameTile):
         border_rect = pygame.Rect(screen_x, screen_y, tile_size, tile_size)
         pygame.draw.rect(screen, (50, 50, 50), border_rect, 1)
 
-    def render_health_bar(self, screen: pygame.Surface, screen_x: int, screen_y: int, tile_size: int, font_manager=None, building_ui=None):
+    def render_health_bar(self, screen: pygame.Surface, screen_x: int, screen_y: int, tile_size: int, font_manager=None, building_ui=None, ui_scale: float = 1.0):
         """
         渲染建筑生命条 - 委托给BuildingUI处理
 
@@ -860,15 +1162,34 @@ class Building(GameTile):
             tile_size: 瓦片大小
             font_manager: 字体管理器（可选）
             building_ui: BuildingUI实例（可选）
+            ui_scale: UI缩放倍数
         """
         if building_ui:
             # 使用BuildingUI的生命条渲染方法
             building_ui.render_building_health_bar(
-                screen, screen_x, screen_y, tile_size, None, self)
+                screen, screen_x, screen_y, tile_size, None, self, ui_scale)
         else:
             # 回退到简单生命条渲染
             self._render_simple_health_bar(
                 screen, screen_x, screen_y, tile_size)
+
+    def render_status_bar(self, screen: pygame.Surface, screen_x: int, screen_y: int, tile_size: int, font_manager=None, building_ui=None, ui_scale: float = 1.0):
+        """
+        渲染建筑状态条 - 委托给BuildingUI处理
+
+        Args:
+            screen: pygame屏幕表面
+            screen_x: 屏幕X坐标
+            screen_y: 屏幕Y坐标
+            tile_size: 瓦片大小
+            font_manager: 字体管理器（可选）
+            building_ui: BuildingUI实例（可选）
+            ui_scale: UI缩放倍数
+        """
+        if building_ui:
+            # 使用BuildingUI的状态条渲染方法
+            building_ui.render_building_status_bar(
+                screen, screen_x, screen_y, tile_size, None, self, ui_scale)
 
     def _render_simple_health_bar(self, screen: pygame.Surface, screen_x: int, screen_y: int, tile_size: int):
         """简单生命条渲染 - 回退方案"""
@@ -944,36 +1265,6 @@ class BuildingRegistry:
             description="提供金币存储和交换功能"
         ),
 
-        BuildingType.LAIR: BuildingConfig(
-            name="巢穴",
-            building_type=BuildingType.LAIR,
-            category=BuildingCategory.INFRASTRUCTURE,
-            cost_gold=150,
-            build_time=90.0,
-            engineer_requirement=1,
-            health=250,
-            armor=4,
-            color=(101, 67, 33),  # 深棕色
-            level=2,
-            special_abilities=["creature_housing",
-                               "healing_boost", "morale_boost"],
-            description="怪物住房，提供治疗和士气加成"
-        ),
-
-        BuildingType.ADVANCED_GOLD_MINE: BuildingConfig(
-            name="高级金矿",
-            building_type=BuildingType.ADVANCED_GOLD_MINE,
-            category=BuildingCategory.INFRASTRUCTURE,
-            cost_gold=300,
-            build_time=120.0,
-            engineer_requirement=1,
-            health=300,
-            armor=6,
-            color=(255, 215, 0),  # 金色
-            level=3,
-            special_abilities=["mining_enhancement", "gold_production"],
-            description="提升挖掘效率和金币产量"
-        ),
 
         # 功能性建筑
         BuildingType.TRAINING_ROOM: BuildingConfig(
@@ -1061,13 +1352,30 @@ class BuildingRegistry:
             cost_crystal=0,
             build_time=100.0,
             engineer_requirement=1,
-            health=400,
+            health=800,  # 提升到800生命值
             armor=5,  # 更新为文档中的5点护甲
             color=(211, 211, 211),  # 石灰色
             level=3,
             special_abilities=["auto_attack", "range_attack"],
             description="自动攻击入侵者的防御建筑"
         ),
+
+        BuildingType.ARCANE_TOWER: BuildingConfig(
+            name="奥术塔",
+            building_type=BuildingType.ARCANE_TOWER,
+            category=BuildingCategory.MILITARY,
+            cost_gold=200,  # 与箭塔一致
+            cost_crystal=0,
+            build_time=100.0,
+            engineer_requirement=1,
+            health=800,  # 提升到800生命值，与箭塔一致
+            armor=5,  # 与箭塔一致
+            color=(138, 43, 226),  # 紫色
+            level=3,
+            special_abilities=["auto_attack", "magic_attack"],
+            description="使用奥术魔法进行范围攻击的防御建筑"
+        ),
+
 
         BuildingType.DEFENSE_FORTIFICATION: BuildingConfig(
             name="防御工事",
@@ -1089,16 +1397,17 @@ class BuildingRegistry:
             name="魔法祭坛",
             building_type=BuildingType.MAGIC_ALTAR,
             category=BuildingCategory.MAGICAL,
-            cost_gold=350,
-            cost_crystal=20,
+            cost_gold=120,
+            cost_crystal=0,  # 移除水晶成本
             build_time=160.0,
             engineer_requirement=1,  # 需要法师辅助
             health=250,
             armor=6,
             color=(138, 43, 226),  # 蓝紫色
             level=4,
-            special_abilities=["mana_generation", "spell_amplification"],
-            description="生成法力并增强法术威力"
+            special_abilities=["mana_generation",
+                               "spell_amplification", "gold_storage"],
+            description="生成法力、增强法术威力并提供金币临时存储"
         ),
 
         BuildingType.SHADOW_TEMPLE: BuildingConfig(
@@ -1106,7 +1415,7 @@ class BuildingRegistry:
             building_type=BuildingType.SHADOW_TEMPLE,
             category=BuildingCategory.MAGICAL,
             cost_gold=800,
-            cost_crystal=50,
+            cost_crystal=0,  # 移除水晶成本
             build_time=300.0,
             engineer_requirement=3,
             health=600,
@@ -1123,7 +1432,7 @@ class BuildingRegistry:
             building_type=BuildingType.MAGIC_RESEARCH_INSTITUTE,
             category=BuildingCategory.MAGICAL,
             cost_gold=600,
-            cost_crystal=30,
+            cost_crystal=0,  # 移除水晶成本
             build_time=240.0,
             engineer_requirement=2,
             health=350,
@@ -1133,6 +1442,40 @@ class BuildingRegistry:
             special_abilities=["spell_research",
                                "magic_knowledge", "spell_creation"],
             description="研究新法术和魔法知识"
+        ),
+
+        # 新建筑类型
+        BuildingType.ORC_LAIR: BuildingConfig(
+            name="兽人巢穴",
+            building_type=BuildingType.ORC_LAIR,
+            category=BuildingCategory.INFRASTRUCTURE,
+            cost_gold=200,
+            cost_crystal=0,
+            build_time=150.0,
+            engineer_requirement=1,
+            health=500,
+            armor=6,
+            color=(139, 69, 19),  # 马鞍棕色
+            level=3,
+            special_abilities=["training", "monster_binding"],
+            description="训练兽人战士的基础建筑"
+        ),
+
+        BuildingType.DEMON_LAIR: BuildingConfig(
+            name="恶魔巢穴",
+            building_type=BuildingType.DEMON_LAIR,
+            category=BuildingCategory.INFRASTRUCTURE,
+            cost_gold=200,
+            cost_crystal=0,
+            build_time=180.0,
+            engineer_requirement=1,
+            health=450,
+            armor=6,
+            color=(75, 0, 130),  # 靛青色
+            level=4,
+            special_abilities=["summoning",
+                               "monster_binding", "mana_consumption"],
+            description="召唤小恶魔的基础建筑"
         ),
     }
 
@@ -1166,12 +1509,21 @@ class BuildingRegistry:
         elif building_type == BuildingType.TREASURY:
             from .building_types import Treasury
             return Treasury(x, y, building_type, config)
-        elif building_type == BuildingType.LAIR:
-            from .building_types import Lair
-            return Lair(x, y, building_type, config)
         elif building_type == BuildingType.ARROW_TOWER:
             from .building_types import ArrowTower
             return ArrowTower(x, y, building_type, config)
+        elif building_type == BuildingType.ARCANE_TOWER:
+            from .building_types import ArcaneTower
+            return ArcaneTower(x, y, building_type, config)
+        elif building_type == BuildingType.MAGIC_ALTAR:
+            from .building_types import MagicAltar
+            return MagicAltar(x, y, building_type, config)
+        elif building_type == BuildingType.ORC_LAIR:
+            from .building_types import OrcLair
+            return OrcLair(x, y, building_type, config)
+        elif building_type == BuildingType.DEMON_LAIR:
+            from .building_types import DemonLair
+            return DemonLair(x, y, building_type, config)
         # 其他建筑类型...
         else:
             # 使用基类

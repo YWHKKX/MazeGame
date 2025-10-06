@@ -12,6 +12,7 @@ from typing import List, Dict, Optional, Tuple
 from src.core import emoji_constants
 from src.core.ui_design import Colors, FontSizes, Spacing, BorderRadius, UIStyles
 from src.ui.base_ui import BaseUI
+from src.utils.logger import game_logger
 
 
 class LogisticsSelectionUI(BaseUI):
@@ -69,7 +70,7 @@ class LogisticsSelectionUI(BaseUI):
         self.unit_buttons = []
         self._initialize_buttons()
 
-        print("🎒 后勤召唤UI初始化完成")
+        game_logger.info("后勤召唤UI初始化完成")
 
     def _initialize_buttons(self):
         """初始化按钮"""
@@ -95,12 +96,12 @@ class LogisticsSelectionUI(BaseUI):
         """显示后勤选择面板"""
         self.is_visible = True
         self.selected_logistics = None
-        print("🎒 显示后勤召唤面板")
+        game_logger.info("显示后勤召唤面板")
 
     def hide(self):
         """隐藏后勤选择面板"""
         self.is_visible = False
-        print("🎒 隐藏后勤召唤面板")
+        game_logger.info("隐藏后勤召唤面板")
 
     def handle_event(self, event, character_db=None) -> bool:
         """
@@ -130,7 +131,8 @@ class LogisticsSelectionUI(BaseUI):
                     if button['rect'].collidepoint(mouse_pos):
                         self.selected_logistics = button['unit']['id']
                         self.hide()
-                        print(f"🎯 选择了后勤单位: {button['unit']['name']}")
+                        game_logger.info(
+                            f"🎯 选择了后勤单位: {button['unit']['name']}")
                         return True
 
                 # 检查是否点击了面板外部（关闭面板）

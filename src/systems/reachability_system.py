@@ -11,6 +11,7 @@ from collections import deque
 
 from ..core.enums import TileType
 from ..core.constants import GameConstants
+from src.utils.logger import game_logger
 
 
 class ReachabilitySystem:
@@ -23,10 +24,39 @@ class ReachabilitySystem:
         self.reachable_tiles: Set[Tuple[int, int]] = set()
         self.log_adjacent_veins = True  # 是否输出接壤金矿脉日志
 
+        # 强制更新机制
+        self.force_update_events = set()  # 需要强制更新的事件
+        self.last_force_update_time = 0.0  # 上次强制更新时间
+        self.force_update_cooldown = 0.5  # 强制更新冷却时间（秒）
+
     def set_base_position(self, base_x: int, base_y: int):
         """设置主基地位置"""
         self.base_position = (base_x, base_y)
         self.reachable_tiles.clear()  # 清除缓存
+
+    def register_force_update_event(self, event_type: str, x: int, y: int):
+        """注册需要强制更新的事件"""
+        self.force_update_events.add((event_type, x, y))
+        game_logger.info(f"🔔 注册强制更新事件: {event_type} at ({x}, {y})")
+
+    def clear_force_update_events(self):
+        """清除强制更新事件"""
+        self.force_update_events.clear()
+
+    def has_force_update_events(self) -> bool:
+        """检查是否有强制更新事件"""
+        return len(self.force_update_events) > 0
+
+    def should_force_update(self) -> bool:
+        """检查是否应该强制更新"""
+        current_time = time.time()
+
+        # 检查冷却时间
+        if current_time - self.last_force_update_time < self.force_update_cooldown:
+            return False
+
+        # 检查是否有强制更新事件
+        return self.has_force_update_events()
 
     def update_reachability(self, game_map: List[List], force_update: bool = False) -> bool:
         """更新所有瓦块的可达性"""
@@ -34,7 +64,13 @@ class ReachabilitySystem:
 
         # 检查是否需要更新
         if not force_update and (current_time - self.last_update_time) < self.update_interval:
-            return False
+            # 检查是否有强制更新事件
+            if self.should_force_update():
+                force_update = True
+                game_logger.info(
+                    f"🔄 触发强制更新，事件数量: {len(self.force_update_events)}")
+            else:
+                return False
 
         if not self.base_position:
             return False
@@ -50,17 +86,23 @@ class ReachabilitySystem:
         self.last_update_time = current_time
         elapsed = time.time() - start_time
 
+        # 如果是强制更新，记录时间并清除事件
+        if force_update:
+            self.last_force_update_time = current_time
+            self.clear_force_update_events()
+
         # 统计金矿脉数量
         gold_veins = self.get_reachable_gold_veins(game_map)
-        print(
-            f"✅ 可达性更新完成: {len(self.reachable_tiles)} 个瓦块可达，{len(gold_veins)} 个金矿脉可达，耗时 {elapsed:.3f}秒")
+        update_type = "强制更新" if force_update else "常规更新"
+        game_logger.info(
+            f"✅ 可达性{update_type}完成: {len(self.reachable_tiles)} 个瓦块可达，{len(gold_veins)} 个金矿脉可达，耗时 {elapsed:.3f}秒")
 
         return True
 
     def _calculate_reachability_bfs(self, game_map: List[List]):
         """使用BFS算法计算可达性"""
         if not self.base_position:
-            print("❌ 主基地位置未设置")
+            game_logger.info("❌ 主基地位置未设置")
             return
 
         base_x, base_y = self.base_position
@@ -69,13 +111,13 @@ class ReachabilitySystem:
         # 检查主基地位置是否有效
         if (base_x < 0 or base_x >= len(game_map[0]) or
                 base_y < 0 or base_y >= len(game_map)):
-            print(f"❌ 主基地位置无效: ({base_x}, {base_y})")
+            game_logger.info(f"❌ 主基地位置无效: ({base_x}, {base_y})")
             return
 
         # 检查主基地瓦块是否可通行
         base_tile = game_map[base_y][base_x]
         if not self._is_tile_passable(base_tile):
-            print(f"❌ 主基地瓦块不可通行: {base_tile}")
+            game_logger.info(f"❌ 主基地瓦块不可通行: {base_tile}")
             return
 
         # BFS队列
@@ -113,13 +155,15 @@ class ReachabilitySystem:
         # 检查瓦块类型
         if hasattr(tile, 'type'):
             # Tile类
-            return tile.type in [TileType.GROUND, TileType.ROOM]
+            # 可通行的瓦片类型：地面、房间、金矿脉
+            return tile.type in [TileType.GROUND, TileType.ROOM, TileType.GOLD_VEIN]
         elif hasattr(tile, 'tile_type'):
             # GameTile类
-            return tile.tile_type in [TileType.GROUND, TileType.ROOM]
+            return tile.tile_type in [TileType.GROUND, TileType.ROOM, TileType.GOLD_VEIN]
         else:
             # 兼容性检查
-            return getattr(tile, 'is_dug', False) or getattr(tile, 'type', None) == TileType.GROUND
+            return (getattr(tile, 'is_dug', False) or
+                    getattr(tile, 'type', None) in [TileType.GROUND, TileType.GOLD_VEIN])
 
     def _update_tile_reachability(self, game_map: List[List]):
         """更新瓦块的可达性标记"""
@@ -227,7 +271,7 @@ class ReachabilitySystem:
                         adjacent_veins.append((check_x, check_y, gold_amount))
                         # 只在启用日志时输出
                         if self.log_adjacent_veins:
-                            print(
+                            game_logger.info(
                                 f"🔍 发现接壤的有储量金矿脉: ({check_x}, {check_y}) 储量: {gold_amount}")
 
         return adjacent_veins

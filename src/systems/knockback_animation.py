@@ -9,6 +9,7 @@ import random
 import pygame
 from typing import List, Tuple, Optional, Any
 from dataclasses import dataclass
+from src.utils.logger import game_logger
 
 
 @dataclass
@@ -162,20 +163,30 @@ class KnockbackAnimation:
             direction: 击退方向
             distance: 击退距离
         """
-        # 1. 创建击退粒子效果
-        self.create_impact_particles(unit.x, unit.y, direction, distance)
+        # 类型检查：确保distance是数值类型
+        if isinstance(distance, (tuple, list)):
+            game_logger.info(
+                f"❌ 击退动画错误: distance类型错误 {type(distance)}, 值: {distance}")
+            distance = 0.0 if not distance else float(distance[0])
 
-        # 2. 屏幕震动效果
-        shake_intensity = min(distance / 30.0, 1.0)  # 根据击退距离调整震动强度
-        self.screen_shake.shake(shake_intensity, 0.2)
+        try:
+            # 1. 创建击退粒子效果
+            self.create_impact_particles(unit.x, unit.y, direction, distance)
 
-        # 3. 单位闪烁效果
-        flash_effect = FlashEffect(duration=0.3, color=(255, 255, 255))
-        self.flash_effects.append((unit, flash_effect))
+            # 2. 屏幕震动效果
+            shake_intensity = min(distance / 30.0, 1.0)  # 根据击退距离调整震动强度
+            self.screen_shake.shake(shake_intensity, 0.2)
 
-        # 4. 播放音效
-        if self.sound_manager:
-            self.play_knockback_sound(unit, distance)
+            # 3. 单位闪烁效果
+            flash_effect = FlashEffect(duration=0.3, color=(255, 255, 255))
+            self.flash_effects.append((unit, flash_effect))
+
+            # 4. 播放音效
+            if self.sound_manager:
+                self.play_knockback_sound(unit, distance)
+        except Exception as e:
+            game_logger.info(
+                f"❌ 击退动画内部错误: {e}, distance类型: {type(distance)}, 值: {distance}")
 
     def create_wall_collision_effect(self, unit: Any, collision_type: str, damage: int,
                                      collision_pos: Tuple[int, int]):
@@ -281,7 +292,7 @@ class KnockbackAnimation:
         try:
             self.sound_manager.play_sound(sound, volume=volume)
         except Exception as e:
-            print(f"播放撞墙音效失败: {e}")
+            game_logger.info(f"播放撞墙音效失败: {e}")
 
     def create_impact_particles(self, x: float, y: float, direction: Tuple[float, float], distance: float):
         """创建冲击粒子效果"""
@@ -329,6 +340,11 @@ class KnockbackAnimation:
 
         # 根据单位体型和击退距离选择音效
         unit_size = getattr(unit, 'size', 15)
+        # 类型检查：确保unit_size是数值类型
+        if isinstance(unit_size, (tuple, list)):
+            game_logger.info(
+                f"❌ 击退音效错误: unit_size类型错误 {type(unit_size)}, 值: {unit_size}")
+            unit_size = 15
 
         # 选择音效类型
         if distance >= 25:
@@ -344,7 +360,7 @@ class KnockbackAnimation:
         try:
             self.sound_manager.play_sound(sound, volume=volume)
         except Exception as e:
-            print(f"播放击退音效失败: {e}")
+            game_logger.info(f"播放击退音效失败: {e}")
 
     def update(self, delta_time: float):
         """更新所有动画效果"""
@@ -362,7 +378,7 @@ class KnockbackAnimation:
         # 更新屏幕震动
         self.screen_shake.update(delta_time)
 
-    def render_particles(self, screen: pygame.Surface, camera_x: float = 0, camera_y: float = 0):
+    def render_particles(self, screen: pygame.Surface, camera_x: float = 0, camera_y: float = 0, ui_scale: float = 1.0):
         """
         渲染粒子效果
 
@@ -370,10 +386,12 @@ class KnockbackAnimation:
             screen: pygame屏幕对象
             camera_x: 相机X偏移
             camera_y: 相机Y偏移
+            ui_scale: UI缩放倍数
         """
         for particle in self.particle_effects:
-            screen_x = particle.x - camera_x
-            screen_y = particle.y - camera_y
+            # 应用UI缩放和相机偏移
+            screen_x = int((particle.x - camera_x) * ui_scale)
+            screen_y = int((particle.y - camera_y) * ui_scale)
 
             # 只渲染屏幕内的粒子
             if (0 <= screen_x <= screen.get_width() and
@@ -382,17 +400,19 @@ class KnockbackAnimation:
                 # 创建带透明度的颜色
                 alpha = particle.get_alpha()
                 if alpha > 0:
+                    # 应用UI缩放到粒子大小
+                    scaled_size = int(particle.size * ui_scale)
                     # 创建临时表面用于透明度渲染
                     temp_surface = pygame.Surface(
-                        (int(particle.size * 2), int(particle.size * 2)))
+                        (scaled_size * 2, scaled_size * 2))
                     temp_surface.set_alpha(alpha)
                     temp_surface.fill(particle.color)
 
                     # 绘制粒子
                     screen.blit(temp_surface,
-                                (screen_x - particle.size, screen_y - particle.size))
+                                (screen_x - scaled_size, screen_y - scaled_size))
 
-    def render_flash_effects(self, screen: pygame.Surface, camera_x: float = 0, camera_y: float = 0):
+    def render_flash_effects(self, screen: pygame.Surface, camera_x: float = 0, camera_y: float = 0, ui_scale: float = 1.0):
         """
         渲染闪烁效果
 
@@ -400,13 +420,15 @@ class KnockbackAnimation:
             screen: pygame屏幕对象
             camera_x: 相机X偏移
             camera_y: 相机Y偏移
+            ui_scale: UI缩放倍数
         """
         for unit, effect in self.flash_effects:
             if not hasattr(unit, 'x') or not hasattr(unit, 'y'):
                 continue
 
-            screen_x = unit.x - camera_x
-            screen_y = unit.y - camera_y
+            # 应用UI缩放和相机偏移
+            screen_x = int((unit.x - camera_x) * ui_scale)
+            screen_y = int((unit.y - camera_y) * ui_scale)
 
             # 只渲染屏幕内的效果
             if (0 <= screen_x <= screen.get_width() and
@@ -414,20 +436,30 @@ class KnockbackAnimation:
 
                 alpha = effect.get_alpha()
                 if alpha > 0:
-                    # 获取单位大小
+                    # 获取单位大小并应用UI缩放
                     unit_size = getattr(unit, 'size', 15)
+                    # 类型检查：确保unit_size是数值类型
+                    if isinstance(unit_size, (tuple, list)):
+                        game_logger.info(
+                            f"❌ 击退闪烁效果错误: unit_size类型错误 {type(unit_size)}, 值: {unit_size}")
+                        unit_size = 15
+                    scaled_unit_size = int(unit_size * ui_scale)
 
-                    # 创建闪烁覆盖层
-                    flash_size = int(unit_size * 1.5)  # 比单位稍大
-                    temp_surface = pygame.Surface((flash_size, flash_size))
-                    temp_surface.set_alpha(alpha)
-                    temp_surface.fill(effect.color)
+                    # 创建圆形闪烁效果
+                    flash_radius = int(scaled_unit_size * 0.75)  # 圆形半径，比单位稍大
 
-                    # 绘制闪烁效果
-                    screen.blit(temp_surface,
-                                (screen_x - flash_size // 2, screen_y - flash_size // 2))
+                    # 创建带透明度的圆形闪烁效果
+                    # 使用临时表面来实现透明度
+                    temp_surface = pygame.Surface(
+                        (flash_radius * 2, flash_radius * 2), pygame.SRCALPHA)
+                    pygame.draw.circle(
+                        temp_surface, (*effect.color, alpha), (flash_radius, flash_radius), flash_radius)
 
-    def render(self, screen: pygame.Surface, camera_x: float = 0, camera_y: float = 0):
+                    # 绘制圆形闪烁效果
+                    screen.blit(temp_surface, (screen_x -
+                                flash_radius, screen_y - flash_radius))
+
+    def render(self, screen: pygame.Surface, camera_x: float = 0, camera_y: float = 0, ui_scale: float = 1.0):
         """
         渲染所有击退动画效果
 
@@ -435,6 +467,7 @@ class KnockbackAnimation:
             screen: pygame屏幕对象
             camera_x: 相机X偏移
             camera_y: 相机Y偏移
+            ui_scale: UI缩放倍数
         """
         # 应用屏幕震动（修改相机位置）
         shake_x, shake_y = self.screen_shake.get_offset()
@@ -442,10 +475,12 @@ class KnockbackAnimation:
         adjusted_camera_y = camera_y + shake_y
 
         # 渲染粒子效果
-        self.render_particles(screen, adjusted_camera_x, adjusted_camera_y)
+        self.render_particles(screen, adjusted_camera_x,
+                              adjusted_camera_y, ui_scale)
 
         # 渲染闪烁效果
-        self.render_flash_effects(screen, adjusted_camera_x, adjusted_camera_y)
+        self.render_flash_effects(
+            screen, adjusted_camera_x, adjusted_camera_y, ui_scale)
 
     def clear_all_effects(self):
         """清除所有动画效果"""
@@ -477,7 +512,7 @@ class KnockbackSoundManager:
             if pygame.mixer.get_init():
                 self._load_sounds()
         except:
-            print("音效系统不可用，将跳过音效播放")
+            game_logger.info("音效系统不可用，将跳过音效播放")
 
     def _load_sounds(self):
         """预加载音效文件"""
@@ -512,7 +547,7 @@ class KnockbackSoundManager:
                 sound.set_volume(volume * self.volume)
                 sound.play()
             except Exception as e:
-                print(f"播放音效 {sound_name} 失败: {e}")
+                game_logger.info(f"播放音效 {sound_name} 失败: {e}")
 
     def set_volume(self, volume: float):
         """设置总音量"""

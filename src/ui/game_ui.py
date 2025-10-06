@@ -20,8 +20,9 @@ class GameUI(BaseUI):
         self.screen = screen
         self.screen_width = screen.get_width()
         self.screen_height = screen.get_height()
+        self.game_instance = self
 
-    def render_resource_panel(self, game_state, creatures_count, max_creatures, building_manager=None):
+    def render_resource_panel(self, game_state, creatures_count, max_creatures, building_manager=None, ui_scale: float = 1.0):
         """渲染美化的资源面板"""
         panel_x, panel_y = Spacing.LG, Spacing.LG
         panel_width, panel_height = 240, 200  # 增加尺寸
@@ -43,17 +44,21 @@ class GameUI(BaseUI):
             center=(panel_x + panel_width // 2, title_y))
         self.screen.blit(title_text, title_rect)
 
-        # 计算总金币（包括金库中的金币）
-        total_gold = game_state.get_total_gold(building_manager)
+        # 使用 ResourceManager 获取资源信息
+        from src.managers.resource_manager import get_resource_manager
+        resource_manager = get_resource_manager(self.game_instance)
+
+        gold_info = resource_manager.get_total_gold()
+        mana_info = resource_manager.get_total_mana()
+
+        total_gold = gold_info.total
+        total_mana = mana_info.total
 
         # 资源信息
         resources = [
             ('gold', emoji_constants.MONEY,
              f"{int(total_gold)}", "黄金", Colors.GOLD),
-            ('mana', "🔮", f"{int(game_state.mana)}", "法力", Colors.MANA),
-            ('food', "🍖", f"{int(game_state.food)}", "食物", Colors.WARNING),
-            ('raw_gold', "⚡", f"{int(game_state.raw_gold)}",
-             "原始黄金", Colors.GOLD),
+            ('mana', "🔮", f"{int(total_mana)}", "魔力", Colors.MANA),
             ('creatures', emoji_constants.MONSTER,
              f"{creatures_count}/{max_creatures}", "怪物", Colors.ERROR),
             ('score', "🏆", f"{int(game_state.score)}", "分数", Colors.WHITE)
@@ -75,22 +80,22 @@ class GameUI(BaseUI):
 
             # Emoji
             emoji_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.NORMAL), emoji, color)
+                self.font_manager.get_font(FontSizes.NORMAL), emoji, color, False, ui_scale)
             self.screen.blit(emoji_surface, (panel_x + Spacing.LG, y))
 
             # 数值 - 右对齐
             value_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.NORMAL), value, color)
+                self.font_manager.get_font(FontSizes.NORMAL), value, color, False, ui_scale)
             value_rect = value_surface.get_rect(
                 right=panel_x + panel_width - Spacing.LG, centery=y + item_height // 2)
             self.screen.blit(value_surface, value_rect)
 
             # 标签
             label_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.SMALL), label, Colors.GRAY_300)
+                self.font_manager.get_font(FontSizes.SMALL), label, Colors.GRAY_300, False, ui_scale)
             self.screen.blit(label_surface, (panel_x + Spacing.LG + 25, y))
 
-    def render_build_panel(self, build_mode, game_state):
+    def render_build_panel(self, build_mode, game_state, ui_scale: float = 1.0):
         """渲染美化的建造面板"""
         panel_x = self.screen_width - 250  # 右上角
         panel_y = Spacing.LG
@@ -149,17 +154,17 @@ class GameUI(BaseUI):
 
             # 快捷键
             key_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.SMALL), f"[{key}]", Colors.GRAY_400)
+                self.font_manager.get_font(FontSizes.SMALL), f"[{key}]", Colors.GRAY_400, False, ui_scale)
             self.screen.blit(key_surface, (panel_x + Spacing.LG, y))
 
             # Emoji
             emoji_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.NORMAL), emoji, text_color)
+                self.font_manager.get_font(FontSizes.NORMAL), emoji, text_color, False, ui_scale)
             self.screen.blit(emoji_surface, (panel_x + Spacing.LG + 30, y))
 
             # 名称
             name_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.SMALL), name, text_color)
+                self.font_manager.get_font(FontSizes.SMALL), name, text_color, False, ui_scale)
             self.screen.blit(name_surface, (panel_x + Spacing.LG + 55, y))
 
             # 成本
@@ -169,12 +174,12 @@ class GameUI(BaseUI):
                 cost_text = cost
 
             cost_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.SMALL), cost_text, cost_color)
+                self.font_manager.get_font(FontSizes.SMALL), cost_text, cost_color, False, ui_scale)
             cost_rect = cost_surface.get_rect(
                 right=panel_x + panel_width - Spacing.LG, centery=y + 8)
             self.screen.blit(cost_surface, cost_rect)
 
-    def render_status_panel(self, mouse_world_x, mouse_world_y, camera_x, camera_y, build_mode, debug_mode):
+    def render_status_panel(self, mouse_world_x, mouse_world_y, camera_x, camera_y, build_mode, debug_mode, ui_scale: float = 1.0):
         """渲染美化的状态面板"""
         panel_x = Spacing.LG
         panel_y = self.screen_height - 140  # 底部
@@ -208,10 +213,10 @@ class GameUI(BaseUI):
         for i, info in enumerate(status_info):
             y = start_y + i * 18
             info_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.SMALL), info, Colors.GRAY_300)
+                self.font_manager.get_font(FontSizes.SMALL), info, Colors.GRAY_300, False, ui_scale)
             self.screen.blit(info_surface, (panel_x + Spacing.LG, y))
 
-    def render_game_info_panel(self, wave_number):
+    def render_game_info_panel(self, wave_number, ui_scale: float = 1.0):
         """渲染游戏信息面板"""
         panel_x = self.screen_width - 250
         panel_y = self.screen_height - 100
@@ -236,20 +241,22 @@ class GameUI(BaseUI):
         # 快捷键提示
         hint_text = "按 B 打开角色图鉴"
         hint_surface = self.font_manager.safe_render(
-            self.font_manager.get_font(FontSizes.SMALL), hint_text, Colors.GRAY_400)
+            self.font_manager.get_font(FontSizes.SMALL), hint_text, Colors.GRAY_400, False, ui_scale)
         hint_rect = hint_surface.get_rect(
             center=(panel_x + panel_width // 2, panel_y + 50))
         self.screen.blit(hint_surface, hint_rect)
 
-    def _render_emoji_text(self, font, emoji, text, color):
+    def _render_emoji_text(self, font, emoji, text, color, ui_scale: float = 1.0):
         """分别渲染 emoji 和文字，然后合并"""
         if not text.strip():
             # 如果没有文字，只渲染 emoji
-            return self.font_manager.safe_render(font, emoji, color)
+            return self.font_manager.safe_render(font, emoji, color, False, ui_scale)
 
         # 分别渲染 emoji 和文字
-        emoji_surface = self.font_manager.safe_render(font, emoji, color)
-        text_surface = self.font_manager.safe_render(font, f" {text}", color)
+        emoji_surface = self.font_manager.safe_render(
+            font, emoji, color, False, ui_scale)
+        text_surface = self.font_manager.safe_render(
+            font, f" {text}", color, False, ui_scale)
 
         # 计算合并后的尺寸
         total_width = emoji_surface.get_width() + text_surface.get_width()
@@ -266,3 +273,48 @@ class GameUI(BaseUI):
         combined_surface.blit(text_surface, (emoji_surface.get_width(), 0))
 
         return combined_surface
+
+    def _calculate_total_mana(self, game_state, building_manager):
+        """计算总魔力（地牢之心 + 所有魔法祭坛的存储魔力）"""
+        total_mana = 0
+
+        # 添加地牢之心的存储魔力
+        if building_manager and hasattr(building_manager, 'buildings'):
+            for building in building_manager.buildings:
+                if hasattr(building, 'building_type'):
+                    # 地牢之心的存储魔力
+                    if (building.building_type.value == 'dungeon_heart' and
+                            hasattr(building, 'stored_mana')):
+                        total_mana += building.stored_mana
+
+                    # 魔法祭坛的存储魔力
+                    elif (building.building_type.value == 'magic_altar' and
+                          hasattr(building, 'stored_mana')):
+                        total_mana += building.stored_mana
+
+        return total_mana
+
+    def _calculate_total_gold(self, game_state, building_manager):
+        """计算总金币（地牢之心 + 金库 + 魔法祭坛 + 箭塔的金币存储）"""
+        total_gold = 0  # 只计算建筑存储的金币，不包含游戏状态中的金币
+
+        # 添加所有可以存储金币的建筑
+        if building_manager and hasattr(building_manager, 'buildings'):
+            for building in building_manager.buildings:
+                if hasattr(building, 'building_type') and hasattr(building, 'stored_gold'):
+                    # 地牢之心的存储金币
+                    if building.building_type.value == 'dungeon_heart':
+                        total_gold += building.stored_gold
+                    # 金库的存储金币
+                    elif building.building_type.value == 'treasury':
+                        total_gold += building.stored_gold
+                    # 魔法祭坛的存储金币
+                    elif building.building_type.value == 'magic_altar':
+                        total_gold += building.stored_gold
+                    # 箭塔的金币存储（转换为弹药）
+                    elif building.building_type.value == 'arrow_tower':
+                        # 箭塔的金币存储通过弹药数量体现，这里不直接计算
+                        # 因为箭塔的金币已经转换为弹药了
+                        pass
+
+        return total_gold

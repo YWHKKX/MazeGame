@@ -4,6 +4,7 @@
 工具模块
 """
 
-from .tile_converter import TileConverter
+# 避免循环导入，不在这里导入TileConverter
+# from .tile_converter import TileConverter
 
 __all__ = ['TileConverter']

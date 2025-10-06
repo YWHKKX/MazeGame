@@ -106,7 +106,7 @@ class AreaEffect:
 
         return False
 
-    def render(self, screen: pygame.Surface):
+    def render(self, screen: pygame.Surface, ui_scale: float = 1.0, camera_x: float = 0, camera_y: float = 0):
         """渲染区域特效"""
         if self.finished:
             return
@@ -115,47 +115,58 @@ class AreaEffect:
         alpha = int(255 * self.opacity *
                     (1 - self.current_time / self.duration))
 
+        # 世界坐标转屏幕坐标并应用UI缩放
+        scaled_radius = int(self.radius * ui_scale)
+        scaled_x = int((self.x - camera_x) * ui_scale)
+        scaled_y = int((self.y - camera_y) * ui_scale)
+
         # 创建带透明度的表面
         effect_surface = pygame.Surface(
-            (int(self.radius * 2), int(self.radius * 2)), pygame.SRCALPHA)
+            (scaled_radius * 2, scaled_radius * 2), pygame.SRCALPHA)
 
         if self.effect_type == "fire":
-            self._render_fire_effect(effect_surface, alpha)
+            self._render_fire_effect(effect_surface, alpha, ui_scale)
         elif self.effect_type == "explosion":
-            self._render_explosion_effect(effect_surface, alpha)
+            self._render_explosion_effect(effect_surface, alpha, ui_scale)
         elif self.effect_type == "lightning":
-            self._render_lightning_effect(effect_surface, alpha)
+            self._render_lightning_effect(effect_surface, alpha, ui_scale)
         elif self.effect_type == "acid":
-            self._render_acid_effect(effect_surface, alpha)
+            self._render_acid_effect(effect_surface, alpha, ui_scale)
         else:
-            self._render_default_effect(effect_surface, alpha)
+            self._render_default_effect(effect_surface, alpha, ui_scale)
 
         # 绘制到主屏幕
-        screen.blit(effect_surface, (int(self.x - self.radius),
-                    int(self.y - self.radius)))
+        screen.blit(effect_surface, (scaled_x - scaled_radius,
+                    scaled_y - scaled_radius))
 
         # 渲染粒子
         if self.particles:
             self.particles.render(screen)
 
-    def _render_fire_effect(self, surface: pygame.Surface, alpha: int):
+    def _render_fire_effect(self, surface: pygame.Surface, alpha: int, ui_scale: float = 1.0):
         """渲染火焰效果"""
+        # 应用UI缩放
+        scaled_radius = int(self.radius * ui_scale)
+        center_x = scaled_radius
+        center_y = scaled_radius
+
         # 绘制火焰圆形
         fire_color = (*self.color, alpha)
         pygame.draw.circle(surface, fire_color,
-                           (int(self.radius), int(self.radius)), int(self.radius))
+                           (center_x, center_y), scaled_radius)
 
         # 添加火焰纹理
         for _ in range(5):
-            flame_x = self.radius + \
-                random.uniform(-self.radius * 0.5, self.radius * 0.5)
-            flame_y = self.radius + \
-                random.uniform(-self.radius * 0.5, self.radius * 0.5)
-            flame_size = random.uniform(self.radius * 0.3, self.radius * 0.7)
-            pygame.draw.circle(surface, fire_color, (int(
-                flame_x), int(flame_y)), int(flame_size))
+            flame_x = center_x + \
+                random.uniform(-scaled_radius * 0.5, scaled_radius * 0.5)
+            flame_y = center_y + \
+                random.uniform(-scaled_radius * 0.5, scaled_radius * 0.5)
+            flame_size = max(1, int(random.uniform(
+                scaled_radius * 0.3, scaled_radius * 0.7)))
+            pygame.draw.circle(surface, fire_color,
+                               (int(flame_x), int(flame_y)), flame_size)
 
-    def _render_explosion_effect(self, surface: pygame.Surface, alpha: int):
+    def _render_explosion_effect(self, surface: pygame.Surface, alpha: int, ui_scale: float = 1.0):
         """渲染爆炸效果"""
         # 绘制爆炸圆形
         explosion_color = (*self.color, alpha)
@@ -170,7 +181,7 @@ class AreaEffect:
             pygame.draw.circle(surface, wave_color,
                                (int(self.radius), int(self.radius)), int(wave_radius), 3)
 
-    def _render_lightning_effect(self, surface: pygame.Surface, alpha: int):
+    def _render_lightning_effect(self, surface: pygame.Surface, alpha: int, ui_scale: float = 1.0):
         """渲染闪电效果"""
         # 绘制闪电圆形
         lightning_color = (*self.color, alpha)
@@ -186,7 +197,7 @@ class AreaEffect:
             pygame.draw.line(surface, lightning_color,
                              (int(start_x), int(start_y)), (int(end_x), int(end_y)), 2)
 
-    def _render_acid_effect(self, surface: pygame.Surface, alpha: int):
+    def _render_acid_effect(self, surface: pygame.Surface, alpha: int, ui_scale: float = 1.0):
         """渲染酸液效果"""
         # 绘制酸液圆形
         acid_color = (*self.color, alpha)
@@ -203,7 +214,7 @@ class AreaEffect:
             pygame.draw.circle(surface, acid_color, (int(
                 bubble_x), int(bubble_y)), int(bubble_size))
 
-    def _render_default_effect(self, surface: pygame.Surface, alpha: int):
+    def _render_default_effect(self, surface: pygame.Surface, alpha: int, ui_scale: float = 1.0):
         """渲染默认效果"""
         effect_color = (*self.color, alpha)
         pygame.draw.circle(surface, effect_color,
@@ -303,10 +314,10 @@ class AreaEffectSystem:
                     damage_events.append((effect, target))
         return damage_events
 
-    def render(self, screen: pygame.Surface):
+    def render(self, screen: pygame.Surface, ui_scale: float = 1.0, camera_x: float = 0, camera_y: float = 0):
         """渲染所有区域特效"""
         for effect in self.effects:
-            effect.render(screen)
+            effect.render(screen, ui_scale, camera_x, camera_y)
 
     def clear(self):
         """清空所有区域特效"""

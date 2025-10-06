@@ -95,34 +95,112 @@ python standalone_game.py
 ## 🏛️ 项目结构
 
 ```
-GameTest/
+MazeMaster/
 ├── standalone_game.py      # 主游戏文件
 ├── start.py               # 一键启动器
 ├── PLAY_STANDALONE.bat    # Windows启动脚本
-├── src/                   # 重构后的模块
+├── src/                   # 核心源代码模块
 │   ├── core/             # 核心常量和配置
-│   │   ├── constants.py  # 游戏常量
+│   │   ├── constants.py  # 游戏常量配置
 │   │   ├── enums.py      # 枚举定义
-│   │   ├── game_state.py # 游戏状态
+│   │   ├── game_state.py # 游戏状态管理
 │   │   ├── emoji_constants.py # Emoji常量
 │   │   └── ui_design.py  # UI设计系统
 │   ├── managers/         # 游戏管理器
-│   │   ├── font_manager.py # 字体管理器
-│   │   └── movement_system.py # 移动系统
+│   │   ├── font_manager.py # 统一字体管理器
+│   │   ├── movement_system.py # 移动系统
+│   │   ├── building_manager.py # 建筑管理器
+│   │   ├── resource_manager.py # 资源管理器
+│   │   ├── tile_manager.py # 瓦片管理器
+│   │   ├── gold_mine_manager.py # 金矿管理器
+│   │   ├── auto_assigner.py # 自动分配器
+│   │   ├── engineer_assigner.py # 工程师分配器
+│   │   ├── optimized_mining_system.py # 优化挖矿系统
+│   │   ├── resource_consumption_manager.py # 资源消耗管理
+│   │   └── game_environment_simulator.py # 游戏环境模拟器
 │   ├── entities/         # 游戏实体
 │   │   ├── character_data.py # 角色数据
-│   │   ├── creature.py   # 生物实体
-│   │   ├── hero.py       # 英雄实体
-│   │   └── configs.py    # 实体配置
-│   └── ui/               # 用户界面
-│       ├── base_ui.py    # UI基类
-│       ├── character_bestiary.py # 角色图鉴
-│       ├── monster_selection.py # 怪物选择
-│       ├── status_indicator.py # 状态指示器
-│       └── game_ui.py    # 游戏UI
+│   │   ├── creature.py   # 生物实体基类
+│   │   ├── building.py   # 建筑实体
+│   │   ├── building_types.py # 建筑类型定义
+│   │   ├── configs.py    # 实体配置
+│   │   ├── tile.py       # 瓦片实体
+│   │   ├── gold_mine.py  # 金矿实体
+│   │   ├── heros.py      # 英雄实体
+│   │   ├── monsters.py   # 怪物实体
+│   │   ├── hero/         # 英雄子模块
+│   │   │   ├── archer.py # 弓箭手
+│   │   │   └── knight.py # 骑士
+│   │   └── monster/      # 怪物子模块
+│   │       ├── goblin_engineer.py # 地精工程师
+│   │       ├── goblin_worker.py  # 哥布林苦工
+│   │       ├── imp.py           # 小恶魔
+│   │       └── orc_warrior.py   # 兽人战士
+│   ├── systems/          # 游戏系统
+│   │   ├── combat_system.py # 战斗系统
+│   │   ├── physics_system.py # 物理系统
+│   │   ├── placement_system.py # 放置系统
+│   │   ├── skill_system.py # 技能系统
+│   │   ├── advanced_pathfinding.py # 高级寻路
+│   │   ├── bstar_pathfinding.py # B*寻路算法
+│   │   ├── unified_pathfinding.py # 统一寻路系统
+│   │   ├── navmesh_system.py # 导航网格系统
+│   │   ├── reachability_system.py # 可达性系统
+│   │   ├── advanced_area_damage.py # 高级区域伤害
+│   │   └── knockback_animation.py # 击退动画
+│   ├── effects/          # 特效系统
+│   │   ├── effect_manager.py # 特效管理器
+│   │   ├── effect_pool.py # 特效对象池
+│   │   ├── effect_renderer.py # 特效渲染器
+│   │   ├── particle_system.py # 粒子系统
+│   │   ├── projectile_system.py # 投射物系统
+│   │   ├── area_effect_system.py # 区域特效系统
+│   │   ├── blade_trail_effect.py # 刀光特效
+│   │   └── glow_effect.py # 发光特效
+│   ├── ui/               # 用户界面
+│   │   ├── base_ui.py    # UI基类
+│   │   ├── game_ui.py    # 游戏主UI
+│   │   ├── character_bestiary.py # 角色图鉴
+│   │   ├── monster_selection.py # 怪物选择界面
+│   │   ├── logistics_selection.py # 后勤选择界面
+│   │   ├── building_ui.py # 建筑UI
+│   │   └── status_indicator.py # 状态指示器
+│   ├── utils/            # 工具模块
+│   │   ├── logger.py     # 日志系统
+│   │   └── tile_converter.py # 瓦片转换器
+│   ├── game/             # 游戏逻辑
+│   └── migration/        # 数据迁移
 ├── docs/                 # 文档目录
+│   ├── README.md         # 文档中心
+│   ├── VERSION_1.1.0.md  # 版本1.1.0文档
+│   ├── STANDALONE.md     # 独立版本文档
+│   ├── CHARACTER_DESIGN.md # 角色设计文档
+│   ├── BUILDING_SYSTEM.md # 建筑系统文档
+│   ├── COMBAT_SYSTEM.md  # 战斗系统文档
+│   ├── PHYSICS_SYSTEM.md # 物理系统文档
+│   ├── MINING_SYSTEM.md  # 挖矿系统文档
+│   ├── MOVEMENT_SYSTEM.md # 移动系统文档
+│   ├── STATUS_INDICATOR.md # 状态指示器文档
+│   ├── UI_BEAUTIFICATION.md # UI美化文档
+│   ├── GOLD_SYSTEM.md    # 金币系统文档
+│   ├── SKILL_SYSTEM.md   # 技能系统文档
+│   ├── EFFECTS_SYSTEM.md # 特效系统文档
+│   ├── UNIFIED_FACTION_SYSTEM.md # 统一阵营系统
+│   ├── UNIFIED_PLACEMENT_INTEGRATION.md # 统一放置集成
+│   ├── KNOCKBACK_REFACTOR.md # 击退重构文档
+│   └── GAME_ENVIRONMENT_SIMULATOR.md # 游戏环境模拟器
 ├── img/                  # 游戏图片资源
+│   ├── Hero/            # 英雄图片
+│   └── Monster/         # 怪物图片
 ├── tests/                # 测试文件
+│   ├── README.md         # 测试说明
+│   ├── building_showcase_simulator.py # 建筑展示模拟器
+│   ├── demon_lair_summon_simulator.py # 恶魔巢穴召唤模拟器
+│   ├── orc_lair_training_simulator.py # 兽人巢穴训练模拟器
+│   ├── arcane_tower_attack_simulator.py # 奥术塔攻击模拟器
+│   ├── arrow_tower_attack_simulator.py # 箭塔攻击模拟器
+│   ├── treasury_storage_simulator.py # 金库存储模拟器
+│   └── repair_test_with_simulator.py # 修复测试模拟器
 ├── requirements_standalone.txt # Python依赖
 ├── README.md             # 项目说明
 └── CHANGELOG.md          # 更新日志

@@ -44,6 +44,7 @@ EAGLE = '🦅'  # 鹰
 SALAMANDER = '🦎'  # 蜥蜴
 TOOLS = '🛠️'  # 工具
 BUG = '🐛'  # 虫子
+MAGIC = '🔮'  # 水晶球（魔法）
 
 # 额外的UI相关emoji
 RUNNER = '🏃'  # 跑步者

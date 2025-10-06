@@ -82,6 +82,11 @@ class GoldMine(GameTile):
             [a for a in self.mining_assignments if a.is_active])
         self.resource.is_depleted = self.status == GoldMineStatus.DEPLETED
 
+        # 同步到瓦片对象属性（用于状态指示器渲染）
+        self.being_mined = self.status == GoldMineStatus.BEING_MINED
+        self.miners_count = len(
+            [a for a in self.mining_assignments if a.is_active])
+
     def discover(self) -> Dict[str, Any]:
         """
         发现金矿
@@ -129,8 +134,8 @@ class GoldMine(GameTile):
         if active_miners >= self.max_miners:
             return {'success': False, 'message': '金矿挖掘者已满'}
 
-        # 检查金矿状态
-        if self.status not in [GoldMineStatus.DISCOVERED, GoldMineStatus.BEING_MINED]:
+        # 检查金矿状态 - 允许未发现的金矿被挖掘（会自动发现）
+        if self.status not in [GoldMineStatus.UNDISCOVERED, GoldMineStatus.DISCOVERED, GoldMineStatus.BEING_MINED]:
             return {'success': False, 'message': '金矿不可挖掘'}
 
         # 创建分配
@@ -143,7 +148,10 @@ class GoldMine(GameTile):
         self.mining_assignments.append(assignment)
 
         # 更新状态
-        if self.status == GoldMineStatus.DISCOVERED:
+        if self.status == GoldMineStatus.UNDISCOVERED:
+            self.status = GoldMineStatus.DISCOVERED
+            self.discovery_time = time.time()
+        elif self.status == GoldMineStatus.DISCOVERED:
             self.status = GoldMineStatus.BEING_MINED
 
         # 同步到父类

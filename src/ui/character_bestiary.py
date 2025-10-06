@@ -13,6 +13,7 @@ from src.managers.font_manager import UnifiedFontManager
 from src.core import emoji_constants
 from src.core.ui_design import Colors, FontSizes, Spacing, BorderRadius, UIStyles
 from src.ui.base_ui import BaseUI
+from src.utils.logger import game_logger
 
 
 class CharacterBestiary(BaseUI):
@@ -32,6 +33,9 @@ class CharacterBestiary(BaseUI):
         self.search_text = ""
         self.show_favorites = False
         self.favorite_characters = set()
+
+        # 头像性别状态管理
+        self.character_gender = {}  # 存储每个角色的当前性别状态 ('male' 或 'female')
 
         # 性能优化: 添加各种缓存
         self._cached_characters = None
@@ -55,7 +59,6 @@ class CharacterBestiary(BaseUI):
         self.content_area_width = self.panel_width - self.sidebar_width - Spacing.XL * 2
 
         # 字体设置 - 使用设计系统的字体大小
-        pygame.font.init()
         self.title_font = self.font_manager.get_font(FontSizes.H1)
         self.header_font = self.font_manager.get_font(FontSizes.H3)
         self.normal_font = self.font_manager.get_font(FontSizes.NORMAL)
@@ -95,14 +98,18 @@ class CharacterBestiary(BaseUI):
         return self._safe_render_text(font, text, color)
 
     def _render_emoji_text(self, font, emoji, text, color):
-        """分别渲染 emoji 和文字，然后合并"""
+        """分别渲染 emoji 和文字，然后合并 - 使用字体管理器的专门方法"""
         if not text.strip():
             # 如果没有文字，只渲染 emoji
-            return self._safe_render_text(font, emoji, color)
+            return self.font_manager.render_emoji_text(emoji, font, color)
 
-        # 分别渲染 emoji 和文字
-        emoji_surface = self._safe_render_text(font, emoji, color)
-        text_surface = self._safe_render_text(font, f" {text}", color)
+        # 使用字体管理器的专门方法分别渲染 emoji 和文字
+        emoji_surface = self.font_manager.render_emoji_text(emoji, font, color)
+
+        # 为中文文本使用专门的字体，确保中文正确渲染
+        chinese_font = self.font_manager.get_font(font.get_height())
+        text_surface = self.font_manager.safe_render(
+            chinese_font, f" {text}", color)
 
         # 计算合并后的尺寸
         total_width = emoji_surface.get_width() + text_surface.get_width()
@@ -124,6 +131,44 @@ class CharacterBestiary(BaseUI):
         """获取星级评价字符串"""
         # 使用emoji_constants中的星级符号
         return emoji_constants.STAR * level
+
+    def _get_current_avatar(self, character: CharacterData) -> Optional[str]:
+        """获取角色当前显示的头像"""
+        if not character:
+            return None
+
+        # 获取角色的性别状态，默认为男性
+        gender = self.character_gender.get(character.id, 'male')
+
+        # 根据性别返回对应头像
+        if gender == 'female' and character.female_avatar:
+            return character.female_avatar
+        elif gender == 'male' and character.male_avatar:
+            return character.male_avatar
+        else:
+            # 回退到默认头像
+            return character.avatar
+
+    def _toggle_character_gender(self, character: CharacterData):
+        """切换角色性别"""
+        if not character:
+            return
+
+        current_gender = self.character_gender.get(character.id, 'male')
+        new_gender = 'female' if current_gender == 'male' else 'male'
+
+        # 检查新性别是否有对应的头像
+        if new_gender == 'female' and not character.female_avatar:
+            return  # 没有女性头像，不切换
+        elif new_gender == 'male' and not character.male_avatar:
+            return  # 没有男性头像，不切换
+
+        self.character_gender[character.id] = new_gender
+
+        # 清除相关缓存
+        self._scaled_avatar_cache = {}
+        self._content_cache = None
+        self._content_cache_character = None
 
     def _is_key_pressed(self, event, key_chars):
         """增强的按键检测，支持输入法兼容性"""
@@ -150,18 +195,32 @@ class CharacterBestiary(BaseUI):
             list(self.character_db.get_all_monsters().values())
 
         for character in all_characters:
-            if character.avatar and os.path.exists(character.avatar):
-                try:
-                    avatar_surface = pygame.image.load(character.avatar)
-                    # 调整头像大小为合适尺寸
-                    avatar_surface = pygame.transform.scale(
-                        avatar_surface, (40, 40))
-                    self.avatar_cache[character.id] = avatar_surface
-                except pygame.error as e:
-                    print(f"无法加载头像 {character.avatar}: {e}")
-                    self.avatar_cache[character.id] = None
-            else:
-                self.avatar_cache[character.id] = None
+            # 尝试加载所有可用的头像
+            avatar_paths = []
+            if character.avatar:
+                avatar_paths.append(('default', character.avatar))
+            if character.male_avatar:
+                avatar_paths.append(('male', character.male_avatar))
+            if character.female_avatar:
+                avatar_paths.append(('female', character.female_avatar))
+
+            # 为每个头像路径创建缓存键
+            for gender, avatar_path in avatar_paths:
+                if avatar_path and os.path.exists(avatar_path):
+                    try:
+                        avatar_surface = pygame.image.load(avatar_path)
+                        # 调整头像大小为合适尺寸
+                        avatar_surface = pygame.transform.scale(
+                            avatar_surface, (40, 40))
+                        cache_key = f"{character.id}_{gender}"
+                        self.avatar_cache[cache_key] = avatar_surface
+                    except pygame.error as e:
+                        game_logger.info(f"无法加载头像 {avatar_path}: {e}")
+                        cache_key = f"{character.id}_{gender}"
+                        self.avatar_cache[cache_key] = None
+                else:
+                    cache_key = f"{character.id}_{gender}"
+                    self.avatar_cache[cache_key] = None
 
     def _calculate_max_scroll(self):
         """计算最大滚动距离"""
@@ -296,7 +355,7 @@ class CharacterBestiary(BaseUI):
                     self._cache_key = None  # 使缓存失效
                     self._calculate_max_scroll()
                 return True
-            elif event.unicode and event.unicode.isprintable():
+            elif event.unicode and event.unicode.isalnum():
                 self.search_text += event.unicode
                 self._cache_key = None  # 使缓存失效
                 self._calculate_max_scroll()
@@ -347,6 +406,11 @@ class CharacterBestiary(BaseUI):
 
                 # 检查是否点击了角色列表项
                 self._handle_character_list_click(mouse_x, mouse_y)
+
+                # 检查是否点击了详细内容区域的头像
+                if self.selected_character:
+                    self._handle_content_area_click(mouse_x, mouse_y)
+
                 return True
 
         elif event.type == pygame.MOUSEWHEEL:
@@ -377,6 +441,18 @@ class CharacterBestiary(BaseUI):
                     self.selected_character = character
                     self._content_cache = None  # 使内容缓存失效
 
+                # 检查是否点击了头像区域（切换性别）
+                avatar_x = list_x + Spacing.MD
+                avatar_y = list_start_y + character_index * \
+                    self.list_item_height - self.scroll_offset + Spacing.MD
+                avatar_size = 48
+                avatar_rect = pygame.Rect(
+                    avatar_x, avatar_y, avatar_size, avatar_size)
+
+                if avatar_rect.collidepoint(mouse_x, mouse_y):
+                    self._toggle_character_gender(character)
+                    return
+
                 # 检查是否点击了收藏按钮
                 favorite_btn_x = list_x + self.sidebar_width - 50
                 favorite_btn_y = list_start_y + character_index * \
@@ -386,6 +462,33 @@ class CharacterBestiary(BaseUI):
 
                 if favorite_btn_rect.collidepoint(mouse_x, mouse_y):
                     self.toggle_favorite(character.id)
+
+    def _handle_content_area_click(self, mouse_x: int, mouse_y: int):
+        """处理内容区域点击"""
+        if not self.selected_character:
+            return
+
+        # 计算详细内容区域的头像位置
+        content_rect = pygame.Rect(
+            self.content_area_x,
+            self.panel_y + 190,
+            self.content_area_width,
+            self.panel_height - 210
+        )
+
+        # 检查是否在内容区域内
+        if not content_rect.collidepoint(mouse_x, mouse_y):
+            return
+
+        # 计算头像区域（相对内容区域）
+        avatar_x = content_rect.x + Spacing.XL
+        avatar_y = content_rect.y + Spacing.XL
+        avatar_size = 140
+        avatar_rect = pygame.Rect(avatar_x, avatar_y, avatar_size, avatar_size)
+
+        # 检查是否点击了头像
+        if avatar_rect.collidepoint(mouse_x, mouse_y):
+            self._toggle_character_gender(self.selected_character)
 
     def switch_category(self, category: CharacterType):
         """切换角色分类"""
@@ -455,7 +558,7 @@ class CharacterBestiary(BaseUI):
 
         # 只在严重卡顿时警告
         if total_render_time > 0.033:  # 30fps阈值
-            print(f"⚠️ 图鉴渲染: {total_render_time*1000:.0f}ms")
+            game_logger.info(f"⚠️ 图鉴渲染: {total_render_time*1000:.0f}ms")
 
     def _render_header(self, screen: pygame.Surface):
         """渲染标题区域"""
@@ -501,8 +604,8 @@ class CharacterBestiary(BaseUI):
         # 搜索图标
         icon_rect = pygame.Rect(
             search_rect.x + Spacing.SM, search_rect.centery - 8, 16, 16)
-        search_icon = self._render_text(
-            self.normal_font, emoji_constants.SEARCH, Colors.GRAY_400)
+        search_icon = self.font_manager.render_emoji_text(
+            emoji_constants.SEARCH, self.normal_font, Colors.GRAY_400)
         screen.blit(search_icon, icon_rect.topleft)
 
     def _render_category_buttons(self, screen: pygame.Surface):
@@ -534,9 +637,22 @@ class CharacterBestiary(BaseUI):
         ) if is_selected else UIStyles.BUTTON_SECONDARY.copy()
         hero_style['font_size'] = FontSizes.SMALL
 
-        hero_text = f"{emoji_constants.COMBAT} 英雄"
-        self.draw_button(screen, hero_btn_rect, hero_text,
-                         hero_style, hover=is_hover)
+        # 绘制按钮背景
+        self.draw_button(screen, hero_btn_rect, "", hero_style, hover=is_hover)
+
+        # 分别渲染按钮文本中的表情符号和中文
+        hero_emoji_surface = self.font_manager.render_emoji_text(
+            emoji_constants.COMBAT, self.small_font, Colors.WHITE)
+        hero_text_surface = self.font_manager.safe_render(
+            self.small_font, " 英雄", Colors.WHITE)
+
+        # 在按钮上绘制混合文本
+        hero_text_x = hero_btn_rect.centerx - \
+            (hero_emoji_surface.get_width() + hero_text_surface.get_width()) // 2
+        hero_text_y = hero_btn_rect.centery - hero_emoji_surface.get_height() // 2
+        screen.blit(hero_emoji_surface, (hero_text_x, hero_text_y))
+        screen.blit(hero_text_surface, (hero_text_x +
+                    hero_emoji_surface.get_width(), hero_text_y))
 
         # 怪物按钮
         is_selected = self.current_category == CharacterType.MONSTER
@@ -546,9 +662,25 @@ class CharacterBestiary(BaseUI):
         ) if is_selected else UIStyles.BUTTON_SECONDARY.copy()
         monster_style['font_size'] = FontSizes.SMALL
 
-        monster_text = f"{emoji_constants.MONSTER} 怪物"
-        self.draw_button(screen, monster_btn_rect, monster_text,
+        # 绘制按钮背景
+        self.draw_button(screen, monster_btn_rect, "",
                          monster_style, hover=is_hover)
+
+        # 分别渲染按钮文本中的表情符号和中文
+        monster_emoji_surface = self.font_manager.render_emoji_text(
+            emoji_constants.MONSTER, self.small_font, Colors.WHITE)
+        monster_text_surface = self.font_manager.safe_render(
+            self.small_font, " 怪物", Colors.WHITE)
+
+        # 在按钮上绘制混合文本
+        monster_text_x = monster_btn_rect.centerx - \
+            (monster_emoji_surface.get_width() +
+             monster_text_surface.get_width()) // 2
+        monster_text_y = monster_btn_rect.centery - \
+            monster_emoji_surface.get_height() // 2
+        screen.blit(monster_emoji_surface, (monster_text_x, monster_text_y))
+        screen.blit(monster_text_surface, (monster_text_x +
+                    monster_emoji_surface.get_width(), monster_text_y))
 
         # 收藏按钮
         is_selected = self.show_favorites
@@ -562,9 +694,26 @@ class CharacterBestiary(BaseUI):
             'font_size': FontSizes.SMALL
         }
 
-        favorites_text = f"{emoji_constants.HEART} 收藏"
-        self.draw_button(screen, favorites_btn_rect,
-                         favorites_text, favorites_style, hover=is_hover)
+        # 绘制按钮背景
+        self.draw_button(screen, favorites_btn_rect, "",
+                         favorites_style, hover=is_hover)
+
+        # 分别渲染按钮文本中的表情符号和中文
+        favorites_emoji_surface = self.font_manager.render_emoji_text(
+            emoji_constants.HEART, self.small_font, Colors.WHITE)
+        favorites_text_surface = self.font_manager.safe_render(
+            self.small_font, " 收藏", Colors.WHITE)
+
+        # 在按钮上绘制混合文本
+        favorites_text_x = favorites_btn_rect.centerx - \
+            (favorites_emoji_surface.get_width() +
+             favorites_text_surface.get_width()) // 2
+        favorites_text_y = favorites_btn_rect.centery - \
+            favorites_emoji_surface.get_height() // 2
+        screen.blit(favorites_emoji_surface,
+                    (favorites_text_x, favorites_text_y))
+        screen.blit(favorites_text_surface, (favorites_text_x +
+                    favorites_emoji_surface.get_width(), favorites_text_y))
 
     def _render_sidebar(self, screen: pygame.Surface):
         """渲染侧边栏"""
@@ -619,7 +768,7 @@ class CharacterBestiary(BaseUI):
 
         # 只在严重卡顿时警告
         if total_sidebar_time > 0.020:  # 20ms阈值
-            print(f"⚠️ 侧边栏: {total_sidebar_time*1000:.0f}ms")
+            game_logger.info(f"⚠️ 侧边栏: {total_sidebar_time*1000:.0f}ms")
 
     def _render_character_list_item(self, screen: pygame.Surface, character: CharacterData, x: int, y: int, index: int):
         """渲染角色列表项"""
@@ -643,24 +792,34 @@ class CharacterBestiary(BaseUI):
         avatar_y = y + Spacing.MD
         avatar_size = 48  # 稍微增大
 
-        # 优化头像渲染 - 使用缓存的缩放头像
-        avatar_cache_key = (character.id, avatar_size)
+        # 获取当前头像
+        current_avatar_path = self._get_current_avatar(character)
+        gender = self.character_gender.get(character.id, 'male')
+
+        # 对于怪物，使用 'default' 作为缓存键；对于英雄，使用性别
+        if character.character_type == CharacterType.MONSTER:
+            avatar_gender = 'default'
+        else:
+            avatar_gender = gender
+
+        avatar_cache_key = (character.id, avatar_gender, avatar_size)
 
         if avatar_cache_key in self._scaled_avatar_cache:
             # 使用缓存的缩放头像
             scaled_avatar = self._scaled_avatar_cache[avatar_cache_key]
             screen.blit(scaled_avatar, (avatar_x, avatar_y))
-        elif character.id in self.avatar_cache and self.avatar_cache[character.id] is not None:
-            # 缩放并缓存头像
-            avatar_surface = self.avatar_cache[character.id]
-            scaled_avatar = pygame.transform.scale(
-                avatar_surface, (avatar_size, avatar_size))
-            self._scaled_avatar_cache[avatar_cache_key] = scaled_avatar
-            screen.blit(scaled_avatar, (avatar_x, avatar_y))
         else:
-            # 创建并缓存颜色圆形
-            if avatar_cache_key not in self._scaled_avatar_cache:
-                # 创建圆形头像表面
+            # 尝试从缓存中获取头像
+            avatar_key = f"{character.id}_{avatar_gender}"
+            if avatar_key in self.avatar_cache and self.avatar_cache[avatar_key] is not None:
+                # 缩放并缓存头像
+                avatar_surface = self.avatar_cache[avatar_key]
+                scaled_avatar = pygame.transform.scale(
+                    avatar_surface, (avatar_size, avatar_size))
+                self._scaled_avatar_cache[avatar_cache_key] = scaled_avatar
+                screen.blit(scaled_avatar, (avatar_x, avatar_y))
+            else:
+                # 创建并缓存颜色圆形
                 circle_surface = pygame.Surface(
                     (avatar_size, avatar_size), pygame.SRCALPHA)
                 pygame.draw.circle(circle_surface, character.color,
@@ -668,9 +827,7 @@ class CharacterBestiary(BaseUI):
                 pygame.draw.circle(circle_surface, Colors.WHITE,
                                    (avatar_size // 2, avatar_size // 2), avatar_size // 2, 2)
                 self._scaled_avatar_cache[avatar_cache_key] = circle_surface
-
-            screen.blit(
-                self._scaled_avatar_cache[avatar_cache_key], (avatar_x, avatar_y))
+                screen.blit(circle_surface, (avatar_x, avatar_y))
 
         # 优化文本渲染 - 使用缓存
         name_cache_key = (character.name, 'name', self.text_color)
@@ -690,7 +847,7 @@ class CharacterBestiary(BaseUI):
             stars = self._get_star_rating(character.threat_level)
             stats_text = f"威胁: {stars} • HP: {character.hp} • 攻击: {character.attack}"
         else:
-            stats_text = f"成本: {character.cost}金 • HP: {character.hp} • 攻击: {character.attack}"
+            stats_text = f"成本: {character.cost}魔力 • HP: {character.hp} • 攻击: {character.attack}"
 
         stats_cache_key = (stats_text, 'stats', Colors.GRAY_300)
         if stats_cache_key in self._text_render_cache:
@@ -719,8 +876,8 @@ class CharacterBestiary(BaseUI):
             fav_surface = self._text_render_cache[fav_cache_key]
         else:
             fav_font = self.font_manager.get_emoji_font(FontSizes.NORMAL)
-            fav_surface = self.font_manager.safe_render(
-                fav_font, favorite_icon, favorite_color)
+            fav_surface = self.font_manager.render_emoji_text(
+                favorite_icon, fav_font, favorite_color)
             self._text_render_cache[fav_cache_key] = fav_surface
 
         fav_rect = fav_surface.get_rect(center=favorite_btn_rect.center)
@@ -743,19 +900,37 @@ class CharacterBestiary(BaseUI):
         avatar_x = x + Spacing.MD
         avatar_y = y + Spacing.MD
         avatar_size = 48
-        avatar_cache_key = (character.id, avatar_size)
+        gender = self.character_gender.get(character.id, 'male')
+
+        # 对于怪物，使用 'default' 作为缓存键；对于英雄，使用性别
+        if character.character_type == CharacterType.MONSTER:
+            avatar_gender = 'default'
+        else:
+            avatar_gender = gender
+
+        avatar_cache_key = (character.id, avatar_gender, avatar_size)
 
         if avatar_cache_key in self._scaled_avatar_cache:
             screen.blit(
                 self._scaled_avatar_cache[avatar_cache_key], (avatar_x, avatar_y))
         else:
-            # 创建简化的颜色圆形并缓存
-            circle_surface = pygame.Surface(
-                (avatar_size, avatar_size), pygame.SRCALPHA)
-            pygame.draw.circle(circle_surface, character.color,
-                               (avatar_size // 2, avatar_size // 2), avatar_size // 2)
-            self._scaled_avatar_cache[avatar_cache_key] = circle_surface
-            screen.blit(circle_surface, (avatar_x, avatar_y))
+            # 尝试从缓存中获取头像
+            avatar_key = f"{character.id}_{avatar_gender}"
+            if avatar_key in self.avatar_cache and self.avatar_cache[avatar_key] is not None:
+                # 缩放并缓存头像
+                avatar_surface = self.avatar_cache[avatar_key]
+                scaled_avatar = pygame.transform.scale(
+                    avatar_surface, (avatar_size, avatar_size))
+                self._scaled_avatar_cache[avatar_cache_key] = scaled_avatar
+                screen.blit(scaled_avatar, (avatar_x, avatar_y))
+            else:
+                # 创建简化的颜色圆形并缓存
+                circle_surface = pygame.Surface(
+                    (avatar_size, avatar_size), pygame.SRCALPHA)
+                pygame.draw.circle(circle_surface, character.color,
+                                   (avatar_size // 2, avatar_size // 2), avatar_size // 2)
+                self._scaled_avatar_cache[avatar_cache_key] = circle_surface
+                screen.blit(circle_surface, (avatar_x, avatar_y))
 
         # 角色名称 - 使用缓存
         name_cache_key = (character.name, 'name_simple', self.text_color)
@@ -774,7 +949,7 @@ class CharacterBestiary(BaseUI):
         if character.character_type == CharacterType.HERO:
             simple_stats = f"威胁: {character.threat_level}"
         else:
-            simple_stats = f"成本: {character.cost}金"
+            simple_stats = f"成本: {character.cost}魔力"
 
         stats_cache_key = (simple_stats, 'simple_stats', Colors.GRAY_300)
         if stats_cache_key in self._text_render_cache:
@@ -922,6 +1097,12 @@ class CharacterBestiary(BaseUI):
         avatar_size = 140  # 增大头像
         avatar_rect = pygame.Rect(avatar_x, avatar_y, avatar_size, avatar_size)
 
+        # 检查是否点击了详细页面的头像
+        mouse_pos = pygame.mouse.get_pos()
+        if avatar_rect.collidepoint(mouse_pos):
+            # 添加悬停效果
+            pygame.draw.rect(screen, (255, 255, 255, 50), avatar_rect, 3)
+
         # 绘制头像背景卡片
         avatar_card_style = UIStyles.CARD.copy()
         avatar_card_style['border_radius'] = BorderRadius.XL
@@ -931,9 +1112,20 @@ class CharacterBestiary(BaseUI):
         inner_rect = pygame.Rect(
             avatar_x + 4, avatar_y + 4, avatar_size - 8, avatar_size - 8)
 
-        if character.id in self.avatar_cache and self.avatar_cache[character.id] is not None:
+        # 获取当前头像
+        gender = self.character_gender.get(character.id, 'male')
+
+        # 对于怪物，使用 'default' 作为缓存键；对于英雄，使用性别
+        if character.character_type == CharacterType.MONSTER:
+            avatar_gender = 'default'
+        else:
+            avatar_gender = gender
+
+        avatar_key = f"{character.id}_{avatar_gender}"
+
+        if avatar_key in self.avatar_cache and self.avatar_cache[avatar_key] is not None:
             # 显示真实头像
-            avatar_surface = self.avatar_cache[character.id]
+            avatar_surface = self.avatar_cache[avatar_key]
             # 缩放头像到合适大小
             avatar_surface = pygame.transform.scale(
                 avatar_surface, (avatar_size - 8, avatar_size - 8))
@@ -973,9 +1165,41 @@ class CharacterBestiary(BaseUI):
         if character.id in self.favorite_characters:
             type_text += f" {emoji_constants.HEART}"
 
-        type_surface = self._render_text(
-            self.normal_font, type_text, Colors.GRAY_300)
-        screen.blit(type_surface, (info_x, type_y))
+        # 对于包含表情符号和中文的混合文本，需要分开处理
+        if any(ord(char) > 127 for char in type_text):  # 包含非ASCII字符
+            # 分离表情符号和中文文本
+            emoji_part = ""
+            chinese_part = type_text
+
+            # 简单分离：提取表情符号
+            for emoji in [emoji_constants.COMBAT, emoji_constants.MONSTER, emoji_constants.HEART]:
+                if emoji in type_text:
+                    emoji_part = emoji
+                    chinese_part = type_text.replace(emoji, "").strip()
+                    break
+
+            if emoji_part and chinese_part:
+                type_surface = self._render_emoji_text(
+                    self.normal_font, emoji_part, chinese_part, Colors.GRAY_300)
+            else:
+                type_surface = self.font_manager.safe_render(
+                    self.normal_font, type_text, Colors.GRAY_300)
+        else:
+            type_surface = self.font_manager.safe_render(
+                self.normal_font, type_text, Colors.GRAY_300)
+
+        type_x = info_x
+        screen.blit(type_surface, (type_x, type_y))
+
+        # 添加性别指示器（仅对有多个头像的角色显示）
+        if character.male_avatar and character.female_avatar:
+            gender = self.character_gender.get(character.id, 'male')
+            gender_text = "♂ 男性" if gender == 'male' else "♀ 女性"
+            # 使用更小的字体显示性别指示器
+            tiny_font = self.font_manager.get_font(FontSizes.TINY)
+            gender_surface = self._render_text(
+                tiny_font, gender_text, character.color)
+            screen.blit(gender_surface, (type_x, type_y + 25))
 
         # 描述 - 更好的间距
         desc_lines = self._wrap_text(
@@ -984,7 +1208,7 @@ class CharacterBestiary(BaseUI):
         for line in desc_lines:
             desc_surface = self._render_text(
                 self.normal_font, line, Colors.GRAY_200)
-            screen.blit(desc_surface, (info_x, desc_y))
+            screen.blit(desc_surface, (type_x, desc_y))
             desc_y += 28  # 增加行间距
 
         return y + avatar_size + Spacing.XL
@@ -999,7 +1223,7 @@ class CharacterBestiary(BaseUI):
         else:
             # 怪物属性
             stats.append(
-                ("召唤成本", f"{character.cost}金币", emoji_constants.MONEY))
+                ("召唤成本", f"{character.cost}魔力", emoji_constants.MONEY))
 
             # 添加怪物分类信息
             if character.monster_category == MonsterCategory.FUNCTIONAL:
@@ -1048,8 +1272,8 @@ class CharacterBestiary(BaseUI):
             self.draw_card(screen, card_rect, stat_card_style)
 
             # 图标 - 顶部居中
-            icon_surface = self._render_text(
-                self.large_font, icon, character.color)
+            icon_surface = self.font_manager.render_emoji_text(
+                icon, self.large_font, character.color)
             icon_rect = icon_surface.get_rect(
                 center=(card_x + card_width // 2, card_y + 25))
             screen.blit(icon_surface, icon_rect)
@@ -1099,8 +1323,8 @@ class CharacterBestiary(BaseUI):
         # 行为列表
         behavior_y = y + 35
         for behavior in character.ai_behavior:
-            bullet_surface = self._render_text(
-                self.normal_font, emoji_constants.BULLET, character.color)
+            bullet_surface = self.font_manager.render_emoji_text(
+                emoji_constants.BULLET, self.normal_font, character.color)
             screen.blit(bullet_surface, (x, behavior_y))
 
             behavior_lines = self._wrap_text(
@@ -1181,7 +1405,7 @@ class CharacterBestiary(BaseUI):
                 json.dump(list(self.favorite_characters),
                           f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存收藏列表失败: {e}")
+            game_logger.info(f"保存收藏列表失败: {e}")
 
     def load_favorites(self, filename: str = "favorites.json"):
         """加载收藏列表"""
@@ -1191,7 +1415,7 @@ class CharacterBestiary(BaseUI):
                 with open(filename, 'r', encoding='utf-8') as f:
                     self.favorite_characters = set(json.load(f))
         except Exception as e:
-            print(f"加载收藏列表失败: {e}")
+            game_logger.info(f"加载收藏列表失败: {e}")
 
     def export_character_data(self, filename: str = "character_export.json"):
         """导出角色数据"""
@@ -1246,10 +1470,10 @@ class CharacterBestiary(BaseUI):
 
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(export_data, f, ensure_ascii=False, indent=2)
-            print(f"角色数据已导出到 {filename}")
+            game_logger.info(f"角色数据已导出到 {filename}")
 
         except Exception as e:
-            print(f"导出角色数据失败: {e}")
+            game_logger.info(f"导出角色数据失败: {e}")
 
     def clear_search(self):
         """清空搜索"""

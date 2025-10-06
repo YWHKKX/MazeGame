@@ -18,6 +18,7 @@ import heapq
 import time
 import pygame
 from typing import List, Tuple, Optional, Set, Dict, Any, Union
+from src.utils.logger import game_logger
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -28,6 +29,8 @@ from ..systems.unified_pathfinding import (
     UnifiedPathfindingSystem, PathfindingStrategy as UnifiedPathfindingStrategy,
     PathfindingResult, PathfindingConfig
 )
+from ..utils.tile_converter import TileConverter
+from ..systems.bstar_pathfinding import BStarPathfinding
 
 
 class MovementMode(Enum):
@@ -326,7 +329,7 @@ class TargetVisualizer:
         self.target_lines.append(line)
         self._needs_redraw = True  # 添加新连线时需要重绘
 
-    def render(self, screen: pygame.Surface, camera_x: int = 0, camera_y: int = 0):
+    def render(self, screen: pygame.Surface, camera_x: int = 0, camera_y: int = 0, ui_scale: float = 1.0):
         """高性能实时渲染目标连线"""
         if not self.visualization_enabled:
             return
@@ -353,7 +356,7 @@ class TargetVisualizer:
             return
 
         # 批处理渲染
-        self._batch_render_lines(screen, camera_x, camera_y)
+        self._batch_render_lines(screen, camera_x, camera_y, ui_scale)
 
         # 更新性能统计
         render_time = time.time() - start_time
@@ -469,7 +472,7 @@ class TargetVisualizer:
         for i in reversed(lines_to_remove):
             del self.target_lines[i]
 
-    def _batch_render_lines(self, screen: pygame.Surface, camera_x: int, camera_y: int):
+    def _batch_render_lines(self, screen: pygame.Surface, camera_x: int, camera_y: int, ui_scale: float = 1.0):
         """批处理渲染所有连线"""
         if not self.target_lines:
             return
@@ -503,37 +506,37 @@ class TargetVisualizer:
         for lod_level, lines in lod_groups.items():
             if lines:
                 self._render_lod_group(
-                    screen, lines, lod_level, camera_x, camera_y)
+                    screen, lines, lod_level, camera_x, camera_y, ui_scale)
 
     def _render_lod_group(self, screen: pygame.Surface, lines: List[Dict], lod_level: int,
-                          camera_x: int, camera_y: int):
+                          camera_x: int, camera_y: int, ui_scale: float = 1.0):
         """渲染指定LOD级别的连线组"""
         if not lines:
             return
 
-        # 获取LOD参数
-        dash_length = self.lod_dash_lengths[lod_level]
-        gap_length = self.lod_gap_lengths[lod_level]
+        # 获取LOD参数，根据UI缩放倍数调整
+        dash_length = int(self.lod_dash_lengths[lod_level] * ui_scale)
+        gap_length = int(self.lod_gap_lengths[lod_level] * ui_scale)
 
         # 批处理渲染
         for line in lines:
             self._render_target_line_optimized(screen, line, camera_x, camera_y,
-                                               dash_length, gap_length)
+                                               dash_length, gap_length, ui_scale)
             self._render_stats['lines_rendered'] += 1
 
     def _render_target_line_optimized(self, screen: pygame.Surface, line: Dict[str, Any],
-                                      camera_x: int, camera_y: int, dash_length: int, gap_length: int):
+                                      camera_x: int, camera_y: int, dash_length: int, gap_length: int, ui_scale: float = 1.0):
         """优化的目标连线渲染"""
         start_pos = line['start_pos']
         end_pos = line['end_pos']
         color = line['color']
         style = line['style']
 
-        # 转换坐标（考虑相机偏移）
-        start_screen_x = int(start_pos[0] - camera_x)
-        start_screen_y = int(start_pos[1] - camera_y)
-        end_screen_x = int(end_pos[0] - camera_x)
-        end_screen_y = int(end_pos[1] - camera_y)
+        # 转换坐标（考虑相机偏移和UI缩放）
+        start_screen_x = int((start_pos[0] - camera_x) * ui_scale)
+        start_screen_y = int((start_pos[1] - camera_y) * ui_scale)
+        end_screen_x = int((end_pos[0] - camera_x) * ui_scale)
+        end_screen_y = int((end_pos[1] - camera_y) * ui_scale)
 
         # 检查是否在屏幕范围内
         screen_rect = screen.get_rect()
@@ -549,8 +552,10 @@ class TargetVisualizer:
             self._draw_dashed_line_optimized(
                 screen, color, screen_points, dash_length, gap_length)
         elif style == "solid":
+            # 根据UI缩放调整线条宽度
+            line_width = max(1, int(2 * ui_scale))
             pygame.draw.line(screen, color, (start_screen_x, start_screen_y),
-                             (end_screen_x, end_screen_y), 2)
+                             (end_screen_x, end_screen_y), line_width)
 
     def _is_line_in_screen(self, x1: int, y1: int, x2: int, y2: int, screen_rect: pygame.Rect) -> bool:
         """检查连线是否在屏幕范围内"""
@@ -647,7 +652,6 @@ class PathMarker:
                 points.append((screen_x, screen_y))
         else:
             # 计算瓦块中心点路径，按顺序连接
-            from ..utils.tile_converter import TileConverter
             for tile in self.path:
                 center_x, center_y = TileConverter.get_screen_center_pixel(
                     tile[0], tile[1], tile_size, camera_x, camera_y)
@@ -662,7 +666,6 @@ class PathMarker:
 
     def _draw_dashed_line(self, screen, color, start_pos, end_pos, width):
         """绘制虚线"""
-        import math
 
         x1, y1 = start_pos
         x2, y2 = end_pos
@@ -733,10 +736,10 @@ class MovementSystem:
     _old_unit_states: Dict[Any, MovementState] = {}  # 向后兼容
 
     # 移动参数
-    _stuck_threshold = 30  # 卡住检测阈值（帧数）
-    _path_update_interval = 0.5  # 路径更新间隔（秒）
-    _min_distance_threshold = 20  # 最小距离阈值（像素）
-    _pathfinding_timeout = 2.0  # 寻路超时时间（秒）
+    _stuck_threshold = GameConstants.STUCK_THRESHOLD  # 卡住检测阈值（帧数）
+    _path_update_interval = GameConstants.PATH_UPDATE_INTERVAL  # 路径更新间隔（秒）
+    _min_distance_threshold = GameConstants.MIN_DISTANCE_THRESHOLD  # 最小距离阈值（像素）
+    _pathfinding_timeout = GameConstants.PATHFINDING_TIMEOUT  # 寻路超时时间（秒）
 
     # ==================== 统一寻路系统 ====================
 
@@ -896,7 +899,7 @@ class MovementSystem:
 
         # 检查目标是否已经失败过
         if MovementSystem.is_target_failed(unit, target):
-            print(f"❌ 目标 {target} 已失败过，跳过寻路")
+            game_logger.info(f"❌ 目标 {target} 已失败过，跳过寻路")
             return False
 
         # 设置寻路状态
@@ -926,7 +929,7 @@ class MovementSystem:
                 unit_state.movement_state_data.path_index = 1
 
             # 寻路成功
-            print(f"✅ 寻路成功: 路径长度 {len(path)}")
+            game_logger.info(f"✅ 寻路成功: 路径长度 {len(path)}")
 
             # 标记路径已生成
             unit.path_generated = True
@@ -937,7 +940,7 @@ class MovementSystem:
             # 寻路失败
             unit_state.pathfinding_state.phase = PathfindingPhase.PATH_NOT_FOUND
             MovementSystem.mark_target_failed(unit, target)
-            print(f"❌ 寻路失败: 目标 {target} 不可达")
+            game_logger.info(f"❌ 寻路失败: 目标 {target} 不可达")
             return False
 
     @staticmethod
@@ -959,12 +962,12 @@ class MovementSystem:
 
         # 检查是否有有效路径
         if not unit_state.movement_state_data.path_valid or not unit_state.movement_state_data.current_path:
-            print(f"❌ 单位 {getattr(unit, 'name', 'Unknown')} 没有有效路径")
+            game_logger.info(f"❌ 单位 {getattr(unit, 'name', 'Unknown')} 没有有效路径")
             return False
 
         # 检查路径索引是否超出范围
         if unit_state.movement_state_data.path_index >= len(unit_state.movement_state_data.current_path):
-            print(f"✅ 单位 {getattr(unit, 'name', 'Unknown')} 已到达目标")
+            game_logger.info(f"✅ 单位 {getattr(unit, 'name', 'Unknown')} 已到达目标")
             # 清除路径
             unit_state.movement_state_data.path_valid = False
             unit_state.movement_state_data.current_path = []
@@ -988,7 +991,7 @@ class MovementSystem:
             dy /= distance
 
             # 计算移动距离
-            move_distance = unit.speed * delta_time * 0.001 * speed_multiplier
+            move_distance = unit.speed * delta_time * speed_multiplier
 
             # 计算新位置
             new_x = unit.x + dx * move_distance
@@ -1002,10 +1005,10 @@ class MovementSystem:
                 unit_state.movement_state = UnitMovementState.MOVING
 
                 # 检查是否到达当前目标点
-                if distance <= 15:  # 15像素范围内算到达
+                if distance <= GameConstants.ARRIVAL_DISTANCE:  # 到达距离范围内算到达
                     unit_state.movement_state_data.path_index += 1
                     unit_state.movement_state_data.stuck_counter = 0
-                    print(
+                    game_logger.info(
                         f"🚶 单位 {getattr(unit, 'name', 'Unknown')} 到达路径点 {unit_state.movement_state_data.path_index}/{len(unit_state.movement_state_data.current_path)}")
                 else:
                     # 检查是否卡住
@@ -1020,7 +1023,7 @@ class MovementSystem:
                     unit_state.movement_state_data.path_valid = False
                     if hasattr(unit, 'path_generated'):
                         unit.path_generated = False
-                    print(
+                    game_logger.info(
                         f"⚠️ 单位 {getattr(unit, 'name', 'Unknown')} 被阻挡，需要重新寻路")
 
                 return False
@@ -1045,6 +1048,10 @@ class MovementSystem:
         Returns:
             bool: 是否成功执行（寻路成功或移动成功）
         """
+        # 检查击退状态 - 击退期间禁止移动
+        if hasattr(unit, 'knockback_state') and unit.knockback_state and unit.knockback_state.is_knocked_back:
+            return False
+
         # 检查是否需要重新寻路
         if (not hasattr(unit, 'path_generated') or not unit.path_generated or
                 not hasattr(unit, 'current_target') or unit.current_target != target):
@@ -1068,7 +1075,7 @@ class MovementSystem:
         if hasattr(unit, 'current_target'):
             unit.current_target = None
 
-        print(f"🧹 单位 {getattr(unit, 'name', 'Unknown')} 路径已清除")
+        game_logger.info(f"🧹 单位 {getattr(unit, 'name', 'Unknown')} 路径已清除")
 
     @staticmethod
     def is_pathfinding(unit: Any) -> bool:
@@ -1197,19 +1204,13 @@ class MovementSystem:
             unit_state = MovementSystem.get_unit_state(unit)
             unit_state.pathfinding_state.path = path
 
-            # 生成像素路径
-            from ..utils.tile_converter import TileConverter
-            pixel_path = []
-            for tile in path:
-                pixel_center = TileConverter.get_tile_center_pixel(
-                    tile[0], tile[1], GameConstants.TILE_SIZE)
-                pixel_path.append(pixel_center)
-            unit_state.pathfinding_state.pixel_path = pixel_path
+            # 路径已经是像素坐标，直接使用
+            unit_state.pathfinding_state.pixel_path = path
 
             # 设置移动状态
-            unit_state.movement_state_data.current_path = pixel_path
+            unit_state.movement_state_data.current_path = path
             # 如果路径包含起始点，从第二个点开始移动
-            if len(pixel_path) > 1 and pixel_path[0] == (unit.x, unit.y):
+            if len(path) > 1 and path[0] == (unit.x, unit.y):
                 unit_state.movement_state_data.path_index = 1
             else:
                 unit_state.movement_state_data.path_index = 0
@@ -1275,7 +1276,7 @@ class MovementSystem:
 
         if distance > 10:
             # 移动到目标
-            move_speed = unit.speed * delta_time * 0.001 * speed_multiplier
+            move_speed = unit.speed * delta_time * speed_multiplier
             new_x = unit.x + (dx / distance) * move_speed
             new_y = unit.y + (dy / distance) * move_speed
 
@@ -1286,7 +1287,7 @@ class MovementSystem:
             unit_state.wandering_wait_time += delta_time
 
             # 等待2-3秒后选择新目标
-            if unit_state.wandering_wait_time >= random.uniform(2000, 3000):
+            if unit_state.wandering_wait_time >= random.uniform(2.0, 3.0):
                 unit_state.wandering_target = None
                 unit_state.wandering_wait_time = 0.0
 
@@ -1495,7 +1496,7 @@ class MovementSystem:
         if not state.current_path or state.path_index >= len(state.current_path):
             return False
 
-        # 获取当前目标点
+        # 获取当前目标点（已经是像素坐标）
         target_point = state.current_path[state.path_index]
 
         # 计算移动方向
@@ -1509,7 +1510,7 @@ class MovementSystem:
             dy /= distance
 
             # 计算移动距离
-            move_distance = unit.speed * delta_time * 0.001 * speed_multiplier
+            move_distance = unit.speed * delta_time * speed_multiplier
 
             # 计算新位置
             new_x = unit.x + dx * move_distance
@@ -1523,7 +1524,7 @@ class MovementSystem:
                 state.mode = MovementMode.MOVING
 
                 # 检查是否到达当前目标点
-                if distance <= 15:  # 15像素范围内算到达
+                if distance <= GameConstants.ARRIVAL_DISTANCE:  # 到达距离范围内算到达
                     state.path_index += 1
                     state.stuck_counter = 0
                 else:
@@ -1629,11 +1630,11 @@ class MovementSystem:
             MovementSystem._path_visualizer.render(screen, camera_x, camera_y)
 
     @staticmethod
-    def render_target_lines(screen: pygame.Surface, camera_x: int = 0, camera_y: int = 0):
+    def render_target_lines(screen: pygame.Surface, camera_x: int = 0, camera_y: int = 0, ui_scale: float = 1.0):
         """渲染目标连线"""
         if MovementSystem._target_visualizer:
             MovementSystem._target_visualizer.render(
-                screen, camera_x, camera_y)
+                screen, camera_x, camera_y, ui_scale)
 
     @staticmethod
     def add_target_line(start_pos: Tuple[float, float], end_pos: Tuple[float, float],
@@ -1643,7 +1644,7 @@ class MovementSystem:
             MovementSystem._target_visualizer.add_target_line(
                 start_pos, end_pos, unit_name, color, 10.0, "dashed"  # 增加到10秒
             )
-            print(
+            game_logger.info(
                 f"🎯 添加目标连线: {unit_name} 从 ({start_pos[0]:.1f}, {start_pos[1]:.1f}) 到 ({end_pos[0]:.1f}, {end_pos[1]:.1f})")
 
     @staticmethod
@@ -1654,7 +1655,7 @@ class MovementSystem:
             MovementSystem._target_visualizer.update_target_line(
                 start_pos, end_pos, unit_name, color, 10.0, "dashed"  # 增加到10秒
             )
-            print(
+            game_logger.info(
                 f"🔄 更新目标连线: {unit_name} 从 ({start_pos[0]:.1f}, {start_pos[1]:.1f}) 到 ({end_pos[0]:.1f}, {end_pos[1]:.1f})")
 
     @staticmethod
@@ -1693,7 +1694,7 @@ class MovementSystem:
             unit_size: 单位大小（瓦片数）
 
         Returns:
-            路径点列表（瓦片坐标），如果找不到路径返回None
+            路径点列表（像素坐标），如果找不到路径返回None
         """
         # 转换像素坐标为瓦片坐标
         start_tile = (int(start_pos[0] // GameConstants.TILE_SIZE),
@@ -1818,12 +1819,15 @@ class MovementSystem:
         return max(dx, dy) + (1.414 - 1) * min(dx, dy)
 
     @staticmethod
-    def _reconstruct_path(node: PathfindingNode) -> List[Tuple[int, int]]:
-        """重构路径"""
+    def _reconstruct_path(node: PathfindingNode) -> List[Tuple[float, float]]:
+        """重构路径（返回像素坐标）"""
         path = []
         current = node
         while current:
-            path.append((current.x, current.y))
+            # 将瓦片坐标转换为像素坐标（瓦片中心）
+            pixel_x = current.x * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2
+            pixel_y = current.y * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2
+            path.append((pixel_x, pixel_y))
             current = current.parent
         return path[::-1]  # 反转路径
 
@@ -1854,11 +1858,11 @@ class MovementSystem:
         # 添加调试信息
         if hasattr(unit, 'name') and hasattr(unit, '_move_debug_counter'):
             if unit._move_debug_counter % 60 == 1:
-                print(
+                game_logger.info(
                     f"📐 {unit.name} 移动计算: 当前({unit.x:.1f}, {unit.y:.1f}) 目标{target_pos} 距离:{distance:.1f}")
 
-        if distance > 20:  # 增加到达距离阈值，5像素太小
-            move_speed = unit.speed * delta_time * 0.001 * speed_multiplier
+        if distance > GameConstants.MIN_DISTANCE_THRESHOLD:  # 增加到达距离阈值
+            move_speed = unit.speed * delta_time * speed_multiplier
             new_x = unit.x + (dx / distance) * move_speed
             new_y = unit.y + (dy / distance) * move_speed
 
@@ -1866,13 +1870,15 @@ class MovementSystem:
             move_result = unit._safe_move(new_x, new_y, game_map)
 
             # 如果移动失败，尝试小幅度的侧向移动来绕过其他单位
-            if not move_result and distance > 30:  # 只有在距离较远时才尝试绕行
+            if not move_result and distance > GameConstants.MIN_DISTANCE_THRESHOLD * 1.5:  # 只有在距离较远时才尝试绕行
                 # 尝试左右侧移
                 side_moves = [
-                    (new_x + move_speed * 0.5, new_y),  # 右移
-                    (new_x - move_speed * 0.5, new_y),  # 左移
-                    (new_x, new_y + move_speed * 0.5),  # 下移
-                    (new_x, new_y - move_speed * 0.5),  # 上移
+                    (new_x + move_speed * GameConstants.SIDE_MOVE_DISTANCE, new_y),  # 右移
+                    (new_x - move_speed * GameConstants.SIDE_MOVE_DISTANCE, new_y),  # 左移
+                    (new_x, new_y + move_speed *
+                     GameConstants.SIDE_MOVE_DISTANCE),  # 下移
+                    (new_x, new_y - move_speed *
+                     GameConstants.SIDE_MOVE_DISTANCE),  # 上移
                 ]
 
                 for side_x, side_y in side_moves:
@@ -1882,7 +1888,7 @@ class MovementSystem:
 
             if hasattr(unit, 'name') and hasattr(unit, '_move_debug_counter'):
                 if unit._move_debug_counter % 60 == 1:
-                    print(
+                    game_logger.info(
                         f"🚶 {unit.name} 移动结果: {move_result} 新位置:({unit.x:.1f}, {unit.y:.1f})px")
             return move_result  # 返回实际的移动结果
 
@@ -1891,6 +1897,10 @@ class MovementSystem:
     @staticmethod
     def flee_movement(unit, threat_pos, delta_time, game_map, speed_multiplier=1.2):
         """逃离移动 - 远离威胁目标"""
+        # 检查击退状态 - 击退期间禁止移动
+        if hasattr(unit, 'knockback_state') and unit.knockback_state and unit.knockback_state.is_knocked_back:
+            return False
+
         if not threat_pos:
             return False
 
@@ -1905,7 +1915,7 @@ class MovementSystem:
             escape_dy /= escape_length
 
             # 向逃离方向移动
-            move_speed = unit.speed * delta_time * 0.001 * speed_multiplier
+            move_speed = unit.speed * delta_time * speed_multiplier
             new_x = unit.x + escape_dx * move_speed
             new_y = unit.y + escape_dy * move_speed
 
@@ -1913,8 +1923,24 @@ class MovementSystem:
         return False
 
     @staticmethod
-    def wandering_movement(unit, delta_time, game_map, speed_multiplier=0.5):
-        """随机游荡移动 - 随机移动+等待"""
+    def wandering_movement(unit, delta_time, game_map, speed_multiplier=0.5, interrupt_check=None):
+        """
+        随机游荡移动 - 随机移动+等待，支持中断机制
+
+        Args:
+            unit: 移动单位
+            delta_time: 时间增量
+            game_map: 游戏地图
+            speed_multiplier: 速度倍数
+            interrupt_check: 中断检查函数，如果返回True则中断游荡
+
+        Returns:
+            bool: 是否完成了一个游荡周期
+        """
+        # 检查击退状态 - 击退期间禁止移动
+        if hasattr(unit, 'knockback_state') and unit.knockback_state and unit.knockback_state.is_knocked_back:
+            return False
+
         # 检查是否有游荡目标
         if not hasattr(unit, 'wander_target') or not unit.wander_target:
             unit.wander_target = MovementSystem._find_random_nearby_position(
@@ -1928,23 +1954,37 @@ class MovementSystem:
 
             if distance > 10:
                 # 移动到目标
-                move_speed = unit.speed * delta_time * 0.001 * speed_multiplier
+                move_speed = unit.speed * delta_time * speed_multiplier
                 new_x = unit.x + (dx / distance) * move_speed
                 new_y = unit.y + (dy / distance) * move_speed
 
                 unit._safe_move(new_x, new_y, game_map)
+
+                # 在移动过程中检查中断条件
+                if interrupt_check and interrupt_check():
+                    unit.wander_target = None  # 清除游荡目标
+                    unit.wander_wait_time = 0
+                    return True  # 表示游荡被中断
+
             else:
                 # 到达目标，开始等待
                 if not hasattr(unit, 'wander_wait_time'):
                     unit.wander_wait_time = 0
                 unit.wander_wait_time += delta_time
 
-                # 等待2-3秒后选择新目标
-                if unit.wander_wait_time >= random.uniform(2000, 3000):
+                # 等待期间也检查中断条件
+                if interrupt_check and interrupt_check():
                     unit.wander_target = None
                     unit.wander_wait_time = 0
+                    return True  # 表示游荡被中断
 
-        return True
+                # 等待2-3秒后选择新目标
+                if unit.wander_wait_time >= random.uniform(2.0, 3.0):
+                    unit.wander_target = None
+                    unit.wander_wait_time = 0
+                    return True  # 表示完成了一个游荡周期
+
+        return False  # 游荡仍在进行中
 
     @staticmethod
     def _find_random_nearby_position(unit, game_map):
@@ -1952,16 +1992,18 @@ class MovementSystem:
         current_tile_x = int(unit.x // GameConstants.TILE_SIZE)
         current_tile_y = int(unit.y // GameConstants.TILE_SIZE)
 
-        # 在附近3格范围内寻找可移动位置
-        for attempt in range(10):  # 尝试10次
-            dx = random.randint(-3, 3)
-            dy = random.randint(-3, 3)
+        # 在附近范围内寻找可移动位置
+        for attempt in range(GameConstants.WANDER_ATTEMPT_COUNT):  # 尝试次数
+            dx = random.randint(-GameConstants.WANDER_RANGE,
+                                GameConstants.WANDER_RANGE)
+            dy = random.randint(-GameConstants.WANDER_RANGE,
+                                GameConstants.WANDER_RANGE)
 
             target_x = current_tile_x + dx
             target_y = current_tile_y + dy
 
-            if (0 <= target_x < GameConstants.MAP_WIDTH and
-                    0 <= target_y < GameConstants.MAP_HEIGHT):
+            if (0 <= target_x < len(game_map[0]) and
+                    0 <= target_y < len(game_map)):
                 tile = game_map[target_y][target_x]
                 if tile.type == TileType.GROUND or tile.is_dug:
                     pixel_x = target_x * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2
@@ -2045,7 +2087,7 @@ class MovementSystem:
     def reset_path_for_new_target(unit, new_target_pos):
         """为目标更换重置路径状态"""
         unit_name = getattr(unit, 'name', 'Unknown')
-        print(f"🔄 单位 {unit_name} 更换目标，重置路径状态")
+        game_logger.info(f"🔄 单位 {unit_name} 更换目标，重置路径状态")
         MovementSystem.clear_path_cache(unit)
         unit.path_target = new_target_pos
 
@@ -2190,8 +2232,6 @@ class MovementSystem:
             if 0 <= x < len(game_map[0]) and 0 <= y < len(game_map):
                 original_tiles[tile] = game_map[y][x]
                 # 临时设置为不可通行
-                from ..core.enums import TileType
-                from ..core.game_state import Tile
                 game_map[y][x] = Tile(type=TileType.ROCK,
                                       is_gold_vein=False, gold_amount=0,
                                       miners_count=0, being_mined=False)
@@ -2320,7 +2360,7 @@ class MovementSystem:
             start_tile[1] < 0 or start_tile[1] >= len(game_map) or
             target_tile[0] < 0 or target_tile[0] >= len(game_map[0]) or
                 target_tile[1] < 0 or target_tile[1] >= len(game_map)):
-            print(
+            game_logger.info(
                 f"🔍 坐标超出地图范围: 起始({start_tile[0]}, {start_tile[1]}) 目标({target_tile[0]}, {target_tile[1]}) 地图大小({len(game_map[0])}, {len(game_map)})")
             return None
 
@@ -2537,15 +2577,15 @@ class MovementSystem:
             abs(start_tile[1] - target_tile[1])
 
         if is_reachable:
-            print(
+            game_logger.info(
                 f"✅ {unit_name} DFS寻路成功: 起始({start_tile[0]}, {start_tile[1]}) -> 目标({target_tile[0]}, {target_tile[1]}) 距离:{distance} 路径长度:{len(path) if path else 0}")
         else:
-            print(
+            game_logger.info(
                 f"❌ {unit_name} DFS寻路失败: 起始({start_tile[0]}, {start_tile[1]}) -> 目标({target_tile[0]}, {target_tile[1]}) 距离:{distance} 深度限制:{max_steps}")
 
             # 添加调试信息：显示DFS搜索的路径
             # 检查起点周围
-            print(f"   起点({start_tile[0]},{start_tile[1]})周围:")
+            game_logger.info(f"   起点({start_tile[0]},{start_tile[1]})周围:")
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     check_x, check_y = start_tile[0] + dx, start_tile[1] + dy
@@ -2553,11 +2593,11 @@ class MovementSystem:
                         tile = game_map[check_y][check_x]
                         is_valid = MovementSystem._is_valid_position(
                             (check_x, check_y), game_map, 1)
-                        print(
+                        game_logger.info(
                             f"     瓦片({check_x},{check_y}): 类型={tile.type.name} 可通行={is_valid}")
 
             # 检查终点周围
-            print(f"   终点({target_tile[0]},{target_tile[1]})周围:")
+            game_logger.info(f"   终点({target_tile[0]},{target_tile[1]})周围:")
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     check_x, check_y = target_tile[0] + dx, target_tile[1] + dy
@@ -2565,7 +2605,7 @@ class MovementSystem:
                         tile = game_map[check_y][check_x]
                         is_valid = MovementSystem._is_valid_position(
                             (check_x, check_y), game_map, 1)
-                        print(
+                        game_logger.info(
                             f"     瓦片({check_x},{check_y}): 类型={tile.type.name} 可通行={is_valid}")
 
             # 标记单位路径模拟失败，防止重复尝试
@@ -2612,14 +2652,8 @@ class MovementSystem:
 
             # 检查是否到达目标
             if current_node.x == target_tile[0] and current_node.y == target_tile[1]:
-                # 重构路径并转换为像素坐标
-                tile_path = MovementSystem._reconstruct_path(current_node)
-                pixel_path = []
-                for tile in tile_path:
-                    pixel_center = (tile[0] * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2,
-                                    tile[1] * GameConstants.TILE_SIZE + GameConstants.TILE_SIZE // 2)
-                    pixel_path.append(pixel_center)
-                return pixel_path
+                # 重构路径（已经是像素坐标）
+                return MovementSystem._reconstruct_path(current_node)
 
             # 将当前节点加入关闭列表
             closed_set.add((current_node.x, current_node.y))
@@ -2711,50 +2745,6 @@ class MovementSystem:
             start_tile, target_tile, game_map, max_depth=100, tile_size=GameConstants.TILE_SIZE)
 
         return pixel_path if is_reachable else None
-
-    @staticmethod
-    def simulate_path_execution_with_pixels(unit, target_pos: Tuple[float, float], game_map: List[List],
-                                            max_steps: int = 100) -> Tuple[bool, str, Optional[List[Tuple[int, int]]], Optional[List[Tuple[int, int]]]]:
-        """
-        模拟路径执行，检查路径是否可行，并返回像素中心点路径
-
-        Args:
-            unit: 单位对象
-            target_pos: 目标位置（像素坐标）
-            game_map: 游戏地图
-            max_steps: 最大模拟步数
-
-        Returns:
-            (is_feasible, reason, tile_path, pixel_path): 是否可行, 原因, 瓦块路径, 像素中心点路径
-        """
-        from ..utils.tile_converter import TileConverter
-
-        # 转换像素坐标为瓦片坐标
-        start_tile = (int(unit.x // GameConstants.TILE_SIZE),
-                      int(unit.y // GameConstants.TILE_SIZE))
-        target_tile = (int(target_pos[0] // GameConstants.TILE_SIZE),
-                       int(target_pos[1] // GameConstants.TILE_SIZE))
-
-        # 检查起点和终点是否有效
-        if not MovementSystem._is_valid_position(start_tile, game_map, 1):
-            return False, "起点无效", None, None
-        if not MovementSystem._is_valid_position(target_tile, game_map, 1):
-            return False, "终点无效", None, None
-
-        # 如果起点和终点相同，直接返回
-        if start_tile == target_tile:
-            pixel_center = TileConverter.get_tile_center_pixel(
-                start_tile[0], start_tile[1], GameConstants.TILE_SIZE)
-            return True, "起点终点相同", [start_tile], [pixel_center]
-
-        # 使用带GameTile的DFS检查可达性
-        is_reachable, tile_path, pixel_path = MovementSystem._dfs_path_find_with_gametile(
-            start_tile, target_tile, game_map, max_depth=max_steps, tile_size=GameConstants.TILE_SIZE)
-
-        if not is_reachable:
-            return False, "目标不可达", None, None
-
-        return True, "路径可行", tile_path, pixel_path
 
     @staticmethod
     def _dfs_path_find(start_tile: Tuple[int, int], target_tile: Tuple[int, int],
@@ -2852,7 +2842,6 @@ class MovementSystem:
         Returns:
             (is_reachable, tile_path, pixel_path): 是否可达, 瓦块路径, 像素中心点路径
         """
-        from ..utils.tile_converter import TileConverter
 
         visited = set()
         tile_path = []
@@ -2922,19 +2911,9 @@ class MovementSystem:
         else:
             # 添加调试信息：显示DFS搜索统计
             if len(visited) > 0:
-                print(
+                game_logger.info(
                     f"   访问的瓦片: {list(visited)[:10]}{'...' if len(visited) > 10 else ''}")
             return False, None, None
-
-    @staticmethod
-    def smart_target_seeking_movement_with_simulation(unit, target_pos, delta_time, game_map, speed_multiplier=1.0):
-        """带路径模拟的智能目标导向移动（使用新的分离式架构）"""
-        if not target_pos:
-            return False
-
-        # 使用新的分离式架构
-        MovementSystem.add_target_to_queue(unit, target_pos)
-        return MovementSystem.update_unit_movement(unit, delta_time, game_map, speed_multiplier)
 
 
 # ==================== 使用示例和文档 ====================
@@ -2975,11 +2954,11 @@ MovementSystem.update_unit_movement(unit, delta_time, game_map, speed_multiplier
 
 # 3. 检查状态
 if MovementSystem.is_moving(unit):
-    print("单位正在移动")
+    game_logger.info("单位正在移动")
 elif MovementSystem.is_pathfinding(unit):
-    print("单位正在寻路")
+    game_logger.info("单位正在寻路")
 elif MovementSystem.is_wandering(unit):
-    print("单位正在游荡")
+    game_logger.info("单位正在游荡")
 
 # 4. 清除所有目标
 MovementSystem.clear_targets(unit)

@@ -292,8 +292,20 @@ class AStarAlgorithm(PathfindingAlgorithm):
             return False
 
         tile = game_map[y][x]
-        # 允许通过地面、房间、金矿脉和已挖掘的瓦片
-        return tile.type in [TileType.GROUND, TileType.ROOM, TileType.GOLD_VEIN] or tile.is_dug
+
+        # 检查瓦片类型是否可通行
+        if tile.type not in [TileType.GROUND, TileType.ROOM, TileType.GOLD_VEIN] and not tile.is_dug:
+            return False
+
+        # 检查是否有建筑阻挡（建造中的建筑不阻挡）
+        if hasattr(tile, 'building') and tile.building:
+            building = tile.building
+            # 只有已完成的建筑才阻挡寻路，建造中的建筑不阻挡
+            from src.entities.building import BuildingStatus
+            if building.status == BuildingStatus.COMPLETED:
+                return False
+
+        return True
 
     def _reconstruct_path(self, came_from: Dict, start: Tuple[int, int], goal: Tuple[int, int]) -> List[Tuple[int, int]]:
         """重构路径"""
@@ -401,8 +413,20 @@ class DFSAlgorithm(PathfindingAlgorithm):
             return False
 
         tile = game_map[y][x]
-        # 允许通过地面、房间、金矿脉和已挖掘的瓦片
-        return tile.type in [TileType.GROUND, TileType.ROOM, TileType.GOLD_VEIN] or tile.is_dug
+
+        # 检查瓦片类型是否可通行
+        if tile.type not in [TileType.GROUND, TileType.ROOM, TileType.GOLD_VEIN] and not tile.is_dug:
+            return False
+
+        # 检查是否有建筑阻挡（建造中的建筑不阻挡）
+        if hasattr(tile, 'building') and tile.building:
+            building = tile.building
+            # 只有已完成的建筑才阻挡寻路，建造中的建筑不阻挡
+            from src.entities.building import BuildingStatus
+            if building.status == BuildingStatus.COMPLETED:
+                return False
+
+        return True
 
 
 class NavMeshAlgorithm(PathfindingAlgorithm):

@@ -48,7 +48,9 @@ class CharacterData:
     description: str = ""
     color: tuple = (255, 255, 255)
     size: int = 15
-    avatar: Optional[str] = None
+    avatar: Optional[str] = None  # 默认头像（向后兼容）
+    male_avatar: Optional[str] = None  # 男性头像
+    female_avatar: Optional[str] = None  # 女性头像
     combat_type: CombatType = CombatType.MELEE
     ai_behavior: List[str] = None
     tactics: List[str] = None
@@ -84,7 +86,9 @@ class CharacterDatabase:
             description='重装战士，拥有高攻击力和护甲值，适合正面硬碰硬的战斗。',
             color=(77, 171, 247),  # 蓝色
             size=18,
-            avatar='img/Hero/骑士.png',
+            avatar='img/Hero/骑士_男.png',  # 默认头像
+            male_avatar='img/Hero/骑士_男.png',
+            female_avatar='img/Hero/骑士_女.png',
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '寻找并攻击威胁最大的生物',
@@ -115,7 +119,9 @@ class CharacterDatabase:
             description='远程射手，拥有120像素的攻击范围和精准射击能力。',
             color=(81, 207, 102),  # 绿色
             size=16,
-            avatar='img/Hero/弓箭手.png',
+            avatar='img/Hero/弓箭手_男.png',  # 默认头像
+            male_avatar='img/Hero/弓箭手_男.png',
+            female_avatar='img/Hero/弓箭手_女.png',
             combat_type=CombatType.RANGED,
             ai_behavior=[
                 '保持距离，远程攻击生物',
@@ -146,7 +152,9 @@ class CharacterDatabase:
             description='魔法师，发射火球造成范围伤害，对群体敌人有效。',
             color=(151, 117, 250),  # 紫色
             size=16,
-            avatar='img/Hero/法师.png',
+            avatar='img/Hero/法师_男.png',  # 默认头像
+            male_avatar='img/Hero/法师_男.png',
+            female_avatar='img/Hero/法师_女.png',
             combat_type=CombatType.MAGIC,
             ai_behavior=[
                 '远程魔法攻击生物',
@@ -177,7 +185,9 @@ class CharacterDatabase:
             description='神圣战士，拥有极高的护甲值和生命值，为友军提供光环支持。',
             color=(255, 212, 59),  # 金色
             size=22,
-            avatar='img/Hero/圣骑士.png',
+            avatar='img/Hero/圣骑士_男.png',  # 默认头像
+            male_avatar='img/Hero/圣骑士_男.png',
+            female_avatar='img/Hero/圣骑士_女.png',
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '保护其他英雄，提供光环支持',
@@ -208,7 +218,9 @@ class CharacterDatabase:
             description='敏捷战士，拥有极高的移动速度和致命的暗杀能力。',
             color=(73, 80, 87),  # 黑色
             size=14,
-            avatar='img/Hero/刺客.png',
+            avatar='img/Hero/刺客_男.png',  # 默认头像
+            male_avatar='img/Hero/刺客_男.png',
+            female_avatar='img/Hero/刺客_女.png',
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '寻找背后攻击的机会',
@@ -239,7 +251,9 @@ class CharacterDatabase:
             description='野外专家，发射的箭矢可以追踪移动目标，难以躲避。',
             color=(139, 69, 19),  # 棕色
             size=17,
-            avatar='img/Hero/游侠.png',
+            avatar='img/Hero/游侠_男.png',  # 默认头像
+            male_avatar='img/Hero/游侠_男.png',
+            female_avatar='img/Hero/游侠_女.png',
             combat_type=CombatType.RANGED,
             ai_behavior=[
                 '使用追踪箭攻击移动目标',
@@ -270,7 +284,9 @@ class CharacterDatabase:
             description='高级魔法师，发射闪电可以跳跃攻击多个目标，对群体有效。',
             color=(54, 79, 199),  # 深蓝色
             size=18,
-            avatar='img/Hero/大法师.png',
+            avatar='img/Hero/大法师_男.png',  # 默认头像
+            male_avatar='img/Hero/大法师_男.png',
+            female_avatar='img/Hero/大法师_女.png',
             combat_type=CombatType.MAGIC,
             ai_behavior=[
                 '寻找群体目标使用连锁闪电',
@@ -301,7 +317,9 @@ class CharacterDatabase:
             description='自然法师，近战远程兼备，可以使用治疗术支援友军。',
             color=(47, 158, 68),  # 深绿色
             size=19,
-            avatar='img/Hero/德鲁伊.png',
+            avatar='img/Hero/德鲁伊_男.png',  # 默认头像
+            male_avatar='img/Hero/德鲁伊_男.png',
+            female_avatar='img/Hero/德鲁伊_女.png',
             combat_type=CombatType.MIXED,
             ai_behavior=[
                 '根据战况选择最佳攻击模式',
@@ -332,7 +350,9 @@ class CharacterDatabase:
             description='龙骑士，可以短距离飞行，释放龙息对群体敌人造成伤害。',
             color=(255, 107, 53),  # 红金色
             size=28,
-            avatar='img/Hero/龙骑士.png',
+            avatar='img/Hero/龙骑士_男.png',  # 默认头像
+            male_avatar='img/Hero/龙骑士_男.png',
+            female_avatar='img/Hero/龙骑士_女.png',
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '使用龙息攻击群体敌人',
@@ -363,7 +383,9 @@ class CharacterDatabase:
             description='暗影剑士，可以瞬间移动，利用分身提供战术优势。',
             color=(108, 92, 231),  # 深紫色
             size=20,
-            avatar='img/Hero/暗影剑圣.png',
+            avatar='img/Hero/暗影剑圣_男.png',  # 默认头像
+            male_avatar='img/Hero/暗影剑圣_男.png',
+            female_avatar='img/Hero/暗影剑圣_女.png',
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '使用暗影步寻找最佳攻击位置',
@@ -394,7 +416,9 @@ class CharacterDatabase:
             description='狂暴战士，血量越低攻击力越强，是战场上最危险的存在。',
             color=(220, 38, 38),  # 深红色
             size=20,
-            avatar='img/Hero/狂战士.png',
+            avatar='img/Hero/狂战士_男.png',  # 默认头像
+            male_avatar='img/Hero/狂战士_男.png',
+            female_avatar='img/Hero/狂战士_女.png',
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '血量越低越激进',
@@ -425,7 +449,9 @@ class CharacterDatabase:
             description='神圣治疗师，能够治疗友军并提供神圣护盾保护。',
             color=(255, 215, 0),  # 金色
             size=16,
-            avatar='img/Hero/牧师.png',
+            avatar='img/Hero/牧师_男.png',  # 默认头像
+            male_avatar='img/Hero/牧师_男.png',
+            female_avatar='img/Hero/牧师_女.png',
             combat_type=CombatType.MAGIC,
             ai_behavior=[
                 '优先治疗受伤的友军',
@@ -452,11 +478,13 @@ class CharacterDatabase:
             armor=1,
             attack_range=25,
             attack_cooldown=0.6,
-            special_ability='偷窃 - 攻击时有机会偷取敌人金币',
+            special_ability='偷窃 - 攻击时有机会偷取敌人魔力',
             description='敏捷盗贼，拥有极高的移动速度和偷窃能力。',
             color=(128, 0, 128),  # 紫色
             size=13,
-            avatar='img/Hero/盗贼.png',
+            avatar='img/Hero/盗贼_男.png',  # 默认头像
+            male_avatar='img/Hero/盗贼_男.png',
+            female_avatar='img/Hero/盗贼_女.png',
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '寻找落单的敌人',
@@ -487,7 +515,9 @@ class CharacterDatabase:
             description='机械工程师，能够建造防御炮台和陷阱来协助战斗。',
             color=(64, 64, 64),  # 深灰色
             size=18,
-            avatar='img/Hero/工程师.png',
+            avatar='img/Hero/工程师_男.png',  # 默认头像
+            male_avatar='img/Hero/工程师_男.png',
+            female_avatar='img/Hero/工程师_女.png',
             combat_type=CombatType.RANGED,
             ai_behavior=[
                 '寻找合适位置建造炮台',
@@ -540,6 +570,39 @@ class CharacterDatabase:
             monster_category=MonsterCategory.COMBAT
         )
 
+        # 兽人战士
+        monsters['orc_warrior'] = CharacterData(
+            id='orc_warrior',
+            name='兽人战士',
+            english_name='Orc Warrior',
+            character_type=CharacterType.MONSTER,
+            threat_level=0,
+            hp=900,
+            attack=22,
+            speed=60,
+            armor=4,
+            attack_range=35,
+            attack_cooldown=1.2,
+            special_ability='狂暴 - 低血量时进入狂暴状态，伤害+50%，速度+30%',
+            description='通过兽人巢穴训练产生的野蛮战士，拥有强大的近战攻击能力和狂暴特性。',
+            color=(0, 100, 0),  # 深绿色
+            size=20,
+            avatar='img/Monster/兽人战士.png',
+            combat_type=CombatType.MELEE,
+            ai_behavior=[
+                '追击英雄 (距离 < 150像素)',
+                '狂暴状态 (血量 < 50%时)',
+                '保护巢穴 (距离巢穴 < 100像素时)'
+            ],
+            tactics=[
+                '狂暴战士',
+                '高伤害输出',
+                '近战专家'
+            ],
+            cost=120,  # 魔力成本
+            monster_category=MonsterCategory.COMBAT
+        )
+
         # 哥布林苦工
         monsters['goblin_worker'] = CharacterData(
             id='goblin_worker',
@@ -553,7 +616,7 @@ class CharacterDatabase:
             armor=0,
             attack_range=30,
             attack_cooldown=1.0,
-            special_ability='挖掘黄金矿脉',
+            special_ability='挖掘魔力矿脉',
             description='经济单位，提供稳定的资源收入，需要其他生物保护。',
             color=(143, 188, 143),  # 浅绿色
             size=12,
@@ -561,8 +624,8 @@ class CharacterDatabase:
             combat_type=CombatType.MELEE,
             ai_behavior=[
                 '逃离敌人 (距离 < 60像素)',
-                '挖掘黄金矿脉 (搜索半径 8格)',
-                '随机巡逻 (无可达金矿时)'
+                '挖掘魔力矿脉 (搜索半径 8格)',
+                '随机巡逻 (无可达魔力矿时)'
             ],
             tactics=[
                 '经济支柱',
@@ -928,6 +991,41 @@ class CharacterDatabase:
         elif character_type == CharacterType.MONSTER:
             return list(self.monsters.values())
         return []
+
+    def create_character(self, character_id: str, x: float, y: float):
+        """创建角色实例"""
+        from src.entities.heros import Hero
+        from src.entities.monster.orc_warrior import OrcWarrior
+        from src.entities.monster.goblin_worker import GoblinWorker
+        from src.entities.monster.goblin_engineer import Engineer
+        from src.entities.monsters import Monster
+        from src.entities.creature import Creature
+        from src.utils.logger import game_logger
+
+        game_logger.info(
+            f"🏗️ CharacterDatabase.create_character 被调用: {character_id} at ({x}, {y})")
+
+        # 特殊怪物类型 - 使用专用类
+        if character_id == 'goblin_worker':
+            game_logger.info(f"🏗️ 创建 GoblinWorker: {character_id}")
+            return GoblinWorker(x, y)
+        elif character_id == 'goblin_engineer':
+            game_logger.info(f"🏗️ 创建 Engineer: {character_id}")
+            from src.entities.monster.goblin_engineer import EngineerType, EngineerRegistry
+            config = EngineerRegistry.get_config(EngineerType.BASIC)
+            return Engineer(x, y, EngineerType.BASIC, config)
+        elif character_id in self.heroes:
+            # 创建英雄实例
+            game_logger.info(f"🏗️ 创建 Hero: {character_id}")
+            return Hero(x, y, character_id)
+        elif character_id in self.monsters:
+            # 创建怪物实例 - 使用Monster基类，它会自动分配技能
+            game_logger.info(f"🏗️ 创建 Monster: {character_id}")
+            return Monster(x, y, character_id)
+        else:
+            # 回退到基础Creature类
+            game_logger.info(f"🏗️ 回退到 Creature: {character_id}")
+            return Creature(x, y, character_id)
 
 
 # 全局角色数据库实例

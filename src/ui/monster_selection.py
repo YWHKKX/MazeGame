@@ -32,23 +32,24 @@ class MonsterSelectionUI(BaseUI):
         # 保持向后兼容
         self.emoji_mapper = None
 
-        # 怪物列表配置 - 使用emoji常量模块
+        # 怪物列表配置 - 使用emoji常量模块，现在消耗魔力而不是金币
         self.monsters = [
-            ('imp', (emoji_constants.MONSTER, '小恶魔'), 100),
-            ('gargoyle', (emoji_constants.EAGLE, '石像鬼'), 200),
-            ('hellhound', (emoji_constants.FIRE, '地狱犬'), 250),
-            ('fire_salamander', (emoji_constants.SALAMANDER, '火蜥蜴'), 300),
-            ('succubus', (emoji_constants.MONSTER, '魅魔'), 450),
-            ('shadow_mage', (emoji_constants.MAGE, '暗影法师'), 400),
-            ('tree_guardian', (emoji_constants.TREE, '树人守护者'), 350),
-            ('stone_golem', (emoji_constants.STONE, '石魔像'), 600),
-            ('shadow_lord', (emoji_constants.CROWN, '暗影领主'), 800),
-            ('bone_dragon', (emoji_constants.DRAGON, '骨龙'), 1000),
+            ('imp', (emoji_constants.MONSTER, '小恶魔'), 100, 'mana'),
+            ('orc_warrior', (emoji_constants.SWORD, '兽人战士'), 120, 'mana'),
+            ('gargoyle', (emoji_constants.EAGLE, '石像鬼'), 200, 'mana'),
+            ('hellhound', (emoji_constants.FIRE, '地狱犬'), 250, 'mana'),
+            ('fire_salamander', (emoji_constants.SALAMANDER, '火蜥蜴'), 300, 'mana'),
+            ('succubus', (emoji_constants.MONSTER, '魅魔'), 450, 'mana'),
+            ('shadow_mage', (emoji_constants.MAGE, '暗影法师'), 400, 'mana'),
+            ('tree_guardian', (emoji_constants.TREE, '树人守护者'), 350, 'mana'),
+            ('stone_golem', (emoji_constants.STONE, '石魔像'), 600, 'mana'),
+            ('shadow_lord', (emoji_constants.CROWN, '暗影领主'), 800, 'mana'),
+            ('bone_dragon', (emoji_constants.DRAGON, '骨龙'), 1000, 'mana'),
         ]
 
         # 网格布局 - 更好的比例
         self.cols = 3
-        self.rows = 4
+        self.rows = 4  # 11个怪物，3列需要4行
         self.button_width = 220  # 增加宽度
         self.button_height = 100  # 增加高度
         self.button_spacing = Spacing.LG
@@ -88,7 +89,7 @@ class MonsterSelectionUI(BaseUI):
     def _handle_mouse_click(self, pos):
         """处理鼠标点击"""
         # 计算点击位置是否在按钮区域内
-        for i, (monster_id, name_data, cost) in enumerate(self.monsters):
+        for i, (monster_id, name_data, cost, resource_type) in enumerate(self.monsters):
             row = i // self.cols
             col = i % self.cols
 
@@ -143,7 +144,7 @@ class MonsterSelectionUI(BaseUI):
         # 渲染怪物按钮
         grid_start_y = self.panel_y + 90  # 调整起始位置
 
-        for i, (monster_id, name_data, cost) in enumerate(self.monsters):
+        for i, (monster_id, name_data, cost, resource_type) in enumerate(self.monsters):
             row = i // self.cols
             col = i % self.cols
 
@@ -190,11 +191,20 @@ class MonsterSelectionUI(BaseUI):
                 center=(button_x + self.button_width // 2, button_y + 55))
             screen.blit(name_surface, name_rect)
 
-            # 分别渲染成本的表情符号和文字
-            cost_emoji_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.SMALL), emoji_constants.MONEY, Colors.GOLD)
-            cost_text_surface = self.font_manager.safe_render(
-                self.font_manager.get_font(FontSizes.SMALL), f"{cost}金", Colors.GOLD)
+            # 根据资源类型渲染成本
+            if resource_type == 'mana':
+                # 魔力消耗
+                cost_emoji_surface = self.font_manager.safe_render(
+                    self.font_manager.get_font(FontSizes.SMALL), emoji_constants.MAGIC, Colors.PURPLE)
+                cost_text_surface = self.font_manager.safe_render(
+                    self.font_manager.get_font(FontSizes.SMALL), f"{cost}魔", Colors.PURPLE)
+            else:
+                # 金币消耗（向后兼容）
+                cost_emoji_surface = self.font_manager.safe_render(
+                    self.font_manager.get_font(FontSizes.SMALL), emoji_constants.MONEY, Colors.GOLD)
+                cost_text_surface = self.font_manager.safe_render(
+                    self.font_manager.get_font(FontSizes.SMALL), f"{cost}金", Colors.GOLD)
+
             # 计算成本布局位置
             cost_total_width = cost_emoji_surface.get_width(
             ) + 4 + cost_text_surface.get_width()  # 4px间距

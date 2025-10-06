@@ -7,6 +7,8 @@
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Any
 from ..core.enums import TileType
+from ..core.constants import GameConstants
+from src.utils.logger import game_logger
 # 延迟导入Building类，避免循环导入
 
 
@@ -34,20 +36,20 @@ class TileBuilding:
 class GameTile:
     """游戏瓦块类 - 统一管理瓦块的所有属性和功能，兼容Tile类接口"""
 
-    def __init__(self, x: int = 0, y: int = 0, tile_type: TileType = None, tile_size: int = 20, **kwargs):
+    def __init__(self, x: int = 0, y: int = 0, tile_type: TileType = None, tile_size: int = None, **kwargs):
         """
         初始化瓦块
 
         Args:
             x, y: 瓦块坐标（瓦块单位）
             tile_type: 瓦块类型
-            tile_size: 瓦块大小（像素）
+            tile_size: 瓦块大小（像素），如果为None则使用游戏常量
             **kwargs: 其他属性，用于兼容Tile类
         """
         self.x = x
         self.y = y
         self.tile_type = tile_type or TileType.ROCK
-        self.tile_size = tile_size
+        self.tile_size = tile_size or GameConstants.TILE_SIZE
 
         # 瓦块状态
         self.is_dug = False  # 是否已挖掘
@@ -72,19 +74,19 @@ class GameTile:
         self._init_compatibility_attributes(kwargs)
 
     @classmethod
-    def from_tile(cls, tile_data: dict, x: int = 0, y: int = 0, tile_size: int = 20):
+    def from_tile(cls, tile_data: dict, x: int = 0, y: int = 0, tile_size: int = None):
         """
         从Tile类数据创建GameTile实例
 
         Args:
             tile_data: Tile类的数据字典
             x, y: 瓦块坐标
-            tile_size: 瓦块大小
+            tile_size: 瓦块大小，如果为None则使用游戏常量
         """
         return cls(
             x=x, y=y,
             tile_type=tile_data.get('type', TileType.ROCK),
-            tile_size=tile_size,
+            tile_size=tile_size or GameConstants.TILE_SIZE,
             **tile_data
         )
 
@@ -260,13 +262,21 @@ class GameTile:
         if self.tile_type != TileType.ROCK:
             return {'success': False, 'gold_discovered': 0, 'message': '不是岩石瓦块'}
 
-        # 检查挖掘成本
-        if cost > 0 and game_state and game_state.gold < cost:
-            return {'success': False, 'gold_discovered': 0, 'message': '金币不足'}
-
-        # 扣除挖掘成本
+        # 检查挖掘成本 - 使用ResourceManager
         if cost > 0 and game_state:
-            game_state.gold -= cost
+            from src.managers.resource_manager import get_resource_manager
+            resource_manager = get_resource_manager(game_state)
+            if not resource_manager.can_afford(gold_cost=cost):
+                gold_info = resource_manager.get_total_gold()
+                return {'success': False, 'gold_discovered': 0, 'message': f'金币不足，需要 {cost}，当前 {gold_info.available}'}
+
+        # 扣除挖掘成本 - 使用ResourceManager
+        if cost > 0 and game_state:
+            from src.managers.resource_manager import get_resource_manager
+            resource_manager = get_resource_manager(game_state)
+            gold_result = resource_manager.consume_gold(cost)
+            if not gold_result['success']:
+                return {'success': False, 'gold_discovered': 0, 'message': f'资源消耗失败: {gold_result}'}
 
         # 在挖掘前先同步属性，检查是否包含金矿脉
         self._sync_to_internal()
@@ -315,7 +325,7 @@ class GameTile:
             gold_amount: 金矿储量
         """
         try:
-            from ..systems.reachability_system import get_reachability_system
+            from ...systems.reachability_system import get_reachability_system
             reachability_system = get_reachability_system()
 
             # 获取当前所有可达的金矿脉
@@ -327,28 +337,31 @@ class GameTile:
             except:
                 reachable_veins = []
 
-            print(f"📊 可达金矿统计 - 新发现金矿 ({x}, {y}) 储量: {gold_amount}")
-            print(f"   🏆 当前总可达金矿脉数量: {len(reachable_veins)}")
+            game_logger.info(f"📊 可达金矿统计 - 新发现金矿 ({x}, {y}) 储量: {gold_amount}")
+            game_logger.info(f"   🏆 当前总可达金矿脉数量: {len(reachable_veins)}")
 
             if reachable_veins:
                 total_gold = sum(vein[2] for vein in reachable_veins)
-                print(f"   💰 总储量: {total_gold} 原始黄金")
+                game_logger.info(f"   💰 总储量: {total_gold} 原始黄金")
 
                 # 显示前5个金矿的详细信息
-                print(f"   📍 可达金矿列表:")
+                game_logger.info(f"   📍 可达金矿列表:")
                 for i, (vx, vy, vgold) in enumerate(reachable_veins[:5]):
                     status = "🆕 新发现" if (vx, vy) == (x, y) else "✅ 已知"
-                    print(f"      {i+1}. {status} ({vx}, {vy}) 储量: {vgold}")
+                    game_logger.info(
+                        f"      {i+1}. {status} ({vx}, {vy}) 储量: {vgold}")
 
                 if len(reachable_veins) > 5:
-                    print(f"      ... 还有 {len(reachable_veins) - 5} 个金矿脉")
+                    game_logger.info(
+                        f"      ... 还有 {len(reachable_veins) - 5} 个金矿脉")
 
         except ImportError:
             # 如果无法导入可达性系统，输出简单日志
-            print(f"📊 发现金矿脉 ({x}, {y}) 储量: {gold_amount}")
+            game_logger.info(f"📊 发现金矿脉 ({x}, {y}) 储量: {gold_amount}")
         except Exception as e:
             # 如果出现其他错误，输出简单日志
-            print(f"📊 发现金矿脉 ({x}, {y}) 储量: {gold_amount} (日志系统错误: {e})")
+            game_logger.info(
+                f"📊 发现金矿脉 ({x}, {y}) 储量: {gold_amount} (日志系统错误: {e})")
 
     def is_reachable(self) -> bool:
         """检查瓦块是否可达（从主基地）"""

@@ -15,6 +15,7 @@ import time
 from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+from src.utils.logger import game_logger
 
 from .navmesh_system import NavMeshSystem, NavMeshNode
 from ..core.constants import GameConstants
@@ -65,16 +66,16 @@ class AdvancedPathfindingSystem:
 
     def initialize(self, game_map: List[List], map_width: int, map_height: int) -> bool:
         """初始化寻路系统"""
-        print("🚀 初始化高级寻路系统...")
+        game_logger.info("🚀 初始化高级寻路系统...")
 
         # 生成导航网格
         success = self.navmesh_system.generate_navmesh(
             game_map, map_width, map_height)
 
         if success:
-            print("✅ 高级寻路系统初始化完成")
+            game_logger.info("✅ 高级寻路系统初始化完成")
         else:
-            print("❌ 高级寻路系统初始化失败")
+            game_logger.info("❌ 高级寻路系统初始化失败")
 
         return success
 

@@ -11,10 +11,13 @@
 """
 
 import math
+import pygame
 from typing import List, Tuple, Optional, Set, Dict, Any
 from dataclasses import dataclass
+from src.utils.logger import game_logger
 from enum import Enum
 import heapq
+from .bstar_pathfinding import BStarPathfinding
 
 
 class NavMeshNodeType(Enum):
@@ -120,7 +123,7 @@ class NavMeshSystem:
         Returns:
             bool: 是否成功生成
         """
-        print("🏗️ 开始生成导航网格...")
+        game_logger.info("🏗️ 开始生成导航网格...")
 
         # 清空现有数据
         self.nodes.clear()
@@ -131,7 +134,7 @@ class NavMeshSystem:
         # 1. 识别可行走区域
         walkable_regions = self._identify_walkable_regions(
             game_map, map_width, map_height)
-        print(f"   发现 {len(walkable_regions)} 个可行走区域")
+        game_logger.info(f"   发现 {len(walkable_regions)} 个可行走区域")
 
         # 2. 为每个区域生成凸多边形
         for region in walkable_regions:
@@ -143,7 +146,8 @@ class NavMeshSystem:
         # 4. 构建空间哈希表
         self._build_spatial_hash()
 
-        print(f"✅ 导航网格生成完成: {len(self.nodes)} 个节点, {len(self.edges)} 条边")
+        game_logger.info(
+            f"✅ 导航网格生成完成: {len(self.nodes)} 个节点, {len(self.edges)} 条边")
         return True
 
     def _identify_walkable_regions(self, game_map: List[List], map_width: int, map_height: int) -> List[List[Tuple[int, int]]]:
@@ -303,7 +307,7 @@ class NavMeshSystem:
                             node1.center, node2.center)
                     )
                     self.edges.append(edge)
-                    print(
+                    game_logger.info(
                         f"   连接节点 {node1.id} 和 {node2.id}, 距离: {edge.length:.1f}")
 
     def _are_polygons_adjacent(self, node1: NavMeshNode, node2: NavMeshNode) -> bool:
@@ -440,7 +444,6 @@ class NavMeshSystem:
 
     def _bstar_search(self, start_node: NavMeshNode, end_node: NavMeshNode) -> Optional[List[NavMeshNode]]:
         """使用B*算法在导航网格中搜索路径"""
-        from .bstar_pathfinding import BStarPathfinding
 
         # 创建B*寻路实例
         bstar = BStarPathfinding(max_iterations=1000, dynamic_threshold=0.1)
@@ -558,7 +561,7 @@ class NavMeshSystem:
 
     def update_navmesh(self, changed_tiles: List[Tuple[int, int]], game_map: List[List]):
         """更新导航网格（当地图发生变化时）"""
-        print("🔄 更新导航网格...")
+        game_logger.info("🔄 更新导航网格...")
 
         # 简化的更新策略：重新生成整个网格
         # 在实际应用中，可以实现增量更新
@@ -570,7 +573,6 @@ class NavMeshSystem:
 
     def render_debug(self, screen, camera_x: int, camera_y: int):
         """渲染调试信息"""
-        import pygame
 
         # 渲染节点
         for node in self.nodes.values():

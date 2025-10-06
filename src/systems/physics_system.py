@@ -11,15 +11,9 @@ import time
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
-
-
-class AttackType(Enum):
-    """攻击类型枚举"""
-    NORMAL = "normal"      # 普通攻击
-    HEAVY = "heavy"        # 重击攻击
-    AREA = "area"          # 范围攻击
-    MAGIC = "magic"        # 魔法攻击
-    PIERCING = "piercing"  # 穿透攻击
+from src.core.constants import GameConstants
+from src.core.enums import AttackType, TileType, KnockbackType
+from src.utils.logger import game_logger
 
 
 @dataclass
@@ -51,33 +45,33 @@ class KnockbackState:
 class PhysicsConstants:
     """物理系统常量"""
     # 碰撞系统参数
-    COLLISION_RADIUS_MULTIPLIER = 0.6
-    MIN_COLLISION_RADIUS = 5
+    COLLISION_RADIUS_MULTIPLIER = GameConstants.COLLISION_RADIUS_MULTIPLIER
+    MIN_COLLISION_RADIUS = GameConstants.MIN_COLLISION_RADIUS
     MAX_COLLISION_RADIUS = 25
     COLLISION_PRECISION = 2  # 像素精度
 
-    # 击退系统参数
-    BASE_KNOCKBACK_DISTANCE = 15
-    MIN_KNOCKBACK_DISTANCE = 5
-    MAX_KNOCKBACK_DISTANCE = 50
-    KNOCKBACK_DURATION = 0.3
-    KNOCKBACK_SPEED = 50  # 像素/秒
+    # 击退系统参数 - 固定距离机制
+    KNOCKBACK_DISTANCE_WEAK = GameConstants.KNOCKBACK_DISTANCE_WEAK
+    KNOCKBACK_DISTANCE_NORMAL = GameConstants.KNOCKBACK_DISTANCE_NORMAL
+    KNOCKBACK_DISTANCE_STRONG = GameConstants.KNOCKBACK_DISTANCE_STRONG
+    KNOCKBACK_DURATION = GameConstants.KNOCKBACK_DURATION
+    KNOCKBACK_SPEED = GameConstants.KNOCKBACK_SPEED  # 像素/秒
 
     # 体型物理参数
     MAX_SIZE_RATIO = 2.0
     SIZE_RESISTANCE_MULTIPLIER = 1.0
 
     # 环境碰撞参数
-    WALL_COLLISION_DAMAGE_RATIO = 0.15  # 撞墙伤害为击退距离的15%
-    MIN_WALL_DAMAGE = 2  # 最小撞墙伤害
-    MAX_WALL_DAMAGE = 15  # 最大撞墙伤害
-    WALL_BOUNCE_RATIO = 0.6  # 撞墙反弹距离比例
-    MIN_BOUNCE_DISTANCE = 8  # 最小反弹距离
+    WALL_COLLISION_DAMAGE_RATIO = GameConstants.WALL_COLLISION_DAMAGE_RATIO  # 撞墙伤害为击退距离的15%
+    MIN_WALL_DAMAGE = GameConstants.MIN_WALL_DAMAGE  # 最小撞墙伤害
+    MAX_WALL_DAMAGE = GameConstants.MAX_WALL_DAMAGE  # 最大撞墙伤害
+    WALL_BOUNCE_RATIO = GameConstants.WALL_BOUNCE_RATIO  # 撞墙反弹距离比例
+    MIN_BOUNCE_DISTANCE = GameConstants.MIN_BOUNCE_DISTANCE  # 最小反弹距离
 
     # 性能参数
-    SPATIAL_HASH_CELL_SIZE = 50
-    MAX_UNITS_PER_CELL = 20
-    UPDATE_FREQUENCY = 60
+    SPATIAL_HASH_CELL_SIZE = GameConstants.SPATIAL_HASH_CELL_SIZE
+    MAX_UNITS_PER_CELL = GameConstants.MAX_UNITS_PER_CELL
+    UPDATE_FREQUENCY = GameConstants.UPDATE_FREQUENCY
 
 
 class SpatialHash:
@@ -127,7 +121,7 @@ class CollisionDetector:
             return unit.collision_radius
 
         # 根据单位大小计算碰撞半径
-        size = getattr(unit, 'size', 15)
+        size = getattr(unit, 'size', GameConstants.DEFAULT_UNIT_SIZE)
         radius = size * PhysicsConstants.COLLISION_RADIUS_MULTIPLIER
 
         # 限制半径范围
@@ -180,11 +174,12 @@ class KnockbackCalculator:
     def get_attack_type_modifier(attack_type: str) -> float:
         """根据攻击类型获取击退修正"""
         modifiers = {
-            AttackType.NORMAL.value: 1.0,
-            AttackType.HEAVY.value: 1.5,    # 重击
-            AttackType.AREA.value: 0.8,     # 范围攻击
-            AttackType.MAGIC.value: 0.6,    # 魔法攻击
-            AttackType.PIERCING.value: 0.7  # 穿透攻击
+            AttackType.NORMAL.value: 1.0,    # 普通攻击：保持原始击退逻辑
+            AttackType.HEAVY.value: 1.5,     # 重击：增强击退
+            AttackType.AREA.value: 0.3,      # 范围攻击：弱击退
+            AttackType.MAGIC.value: 0.0,     # 魔法攻击：无击退
+            AttackType.PIERCING.value: 0.7,  # 穿透攻击：中等击退
+            AttackType.RANGED.value: 0.3,    # 远程攻击：弱击退
         }
         return modifiers.get(attack_type, 1.0)
 
@@ -210,7 +205,7 @@ class KnockbackCalculator:
     def calculate_knockback(attacker: Any, target: Any, attack_damage: float,
                             attack_type: str = AttackType.NORMAL.value) -> KnockbackResult:
         """
-        计算击退效果
+        计算击退效果 - 使用固定距离机制
 
         Args:
             attacker: 攻击者单位
@@ -221,38 +216,44 @@ class KnockbackCalculator:
         Returns:
             KnockbackResult: 击退结果对象
         """
-        # 1. 基础击退距离
-        base_knockback = PhysicsConstants.BASE_KNOCKBACK_DISTANCE
-
-        # 2. 体型差系数
-        attacker_size = getattr(attacker, 'size', 15)
-        target_size = getattr(target, 'size', 15)
-        size_ratio = attacker_size / target_size
-        size_modifier = min(size_ratio, PhysicsConstants.MAX_SIZE_RATIO)
-
-        # 3. 目标击退抗性
-        target_resistance = KnockbackCalculator.get_size_resistance(
-            target_size)
-
-        # 4. 攻击类型修正
+        # 1. 获取攻击类型修正器
         attack_modifier = KnockbackCalculator.get_attack_type_modifier(
             attack_type)
 
-        # 5. 伤害修正
-        damage_modifier = min(attack_damage / 20.0, 1.5)
+        # 2. 如果魔法攻击，直接返回无击退
+        if attack_type == AttackType.MAGIC.value:
+            return KnockbackResult(
+                distance=0,
+                duration=0,
+                direction=(0, 0)
+            )
 
-        # 6. 最终击退距离
-        final_distance = (base_knockback *
-                          size_modifier *
-                          attack_modifier *
-                          damage_modifier /
-                          target_resistance)
+        # 3. 确定击退类型
+        knockback_type = KnockbackCalculator._determine_knockback_type(
+            attacker, attack_damage)
 
-        # 7. 限制击退距离
-        final_distance = max(PhysicsConstants.MIN_KNOCKBACK_DISTANCE,
-                             min(final_distance, PhysicsConstants.MAX_KNOCKBACK_DISTANCE))
+        # 4. 获取固定击退距离
+        final_distance = KnockbackCalculator._get_fixed_knockback_distance(
+            knockback_type)
 
-        # 8. 计算击退方向
+        # 5. 应用攻击类型修正器
+        final_distance = int(final_distance * attack_modifier)
+
+        # 6. 应用目标抗性修正（只影响强击退且距离大于0）
+        if knockback_type == KnockbackType.STRONG and final_distance > 0:
+            target_size = getattr(
+                target, 'size', GameConstants.DEFAULT_UNIT_SIZE)
+            # 类型检查：确保size是数值类型
+            if isinstance(target_size, (tuple, list)):
+                game_logger.info(
+                    f"❌ 击退计算错误: target_size类型错误 {type(target_size)}, 值: {target_size}")
+                target_size = GameConstants.DEFAULT_UNIT_SIZE
+
+            target_resistance = KnockbackCalculator.get_size_resistance(
+                target_size)
+            final_distance = int(final_distance / target_resistance)
+
+        # 7. 计算击退方向
         direction = KnockbackCalculator.calculate_knockback_direction(
             (attacker.x, attacker.y), (target.x, target.y)
         )
@@ -262,6 +263,100 @@ class KnockbackCalculator:
             duration=PhysicsConstants.KNOCKBACK_DURATION,
             direction=direction
         )
+
+    @staticmethod
+    def _determine_knockback_type(attacker: Any, attack_damage: float) -> KnockbackType:
+        """
+        确定击退类型 - 基于攻击者属性和伤害
+
+        Args:
+            attacker: 攻击者单位
+            attack_damage: 攻击伤害
+
+        Returns:
+            KnockbackType: 击退类型
+        """
+        # 1. 检查是否显式设置了击退类型
+        if hasattr(attacker, 'knockback_type') and attacker.knockback_type is not None:
+            return attacker.knockback_type
+
+        # 2. 检查是否具有强击退能力
+        if KnockbackCalculator._has_strong_knockback(attacker):
+            # 检查是否为暴击攻击
+            is_critical = getattr(attacker, 'is_critical_attack', False)
+            if is_critical:
+                return KnockbackType.STRONG  # 暴击使用强击退
+            else:
+                return KnockbackType.NORMAL  # 普通攻击使用普通击退
+
+        # 3. 检查是否具有弱击退能力
+        if hasattr(attacker, 'has_weak_knockback') and attacker.has_weak_knockback:
+            return KnockbackType.WEAK
+
+        # 4. 检查是否无击退能力
+        if hasattr(attacker, 'has_no_knockback') and attacker.has_no_knockback:
+            return KnockbackType.NONE
+
+        # 5. 默认使用普通击退
+        return KnockbackType.NORMAL
+
+    @staticmethod
+    def _get_fixed_knockback_distance(knockback_type: KnockbackType) -> float:
+        """
+        获取固定击退距离
+
+        Args:
+            knockback_type: 击退类型
+
+        Returns:
+            float: 击退距离
+        """
+        if knockback_type == KnockbackType.WEAK:
+            return PhysicsConstants.KNOCKBACK_DISTANCE_WEAK
+        elif knockback_type == KnockbackType.NORMAL:
+            return PhysicsConstants.KNOCKBACK_DISTANCE_NORMAL
+        elif knockback_type == KnockbackType.STRONG:
+            return PhysicsConstants.KNOCKBACK_DISTANCE_STRONG
+        else:  # KnockbackType.NONE
+            return 0.0
+
+    @staticmethod
+    def _has_strong_knockback(attacker: Any) -> bool:
+        """
+        检查攻击者是否具有强击退能力
+
+        强击退能力可以通过以下方式定义：
+        1. 显式设置 has_strong_knockback 属性为 True
+        2. 建筑类型在强击退列表中
+        3. 单位类型在强击退列表中
+
+        Args:
+            attacker: 攻击者单位
+
+        Returns:
+            bool: 是否具有强击退能力
+        """
+        # 1. 检查显式设置的强击退标志
+        if hasattr(attacker, 'has_strong_knockback'):
+            return attacker.has_strong_knockback
+
+        # 2. 检查建筑类型
+        if hasattr(attacker, 'building_type'):
+            strong_knockback_buildings = {
+                'arrow_tower',      # 箭塔
+            }
+            if attacker.building_type.value in strong_knockback_buildings:
+                return True
+
+        # 3. 检查单位类型
+        if hasattr(attacker, 'type'):
+            strong_knockback_units = {
+                'stone_golem',      # 石巨人
+            }
+            if attacker.type in strong_knockback_units:
+                return True
+
+        return False
 
 
 class KnockbackApplier:
@@ -334,6 +429,10 @@ class KnockbackApplier:
         if can_knockback == "reduced":
             knockback_result.distance *= 0.5
 
+        # 检查击退距离和持续时间，如果都为0则跳过击退
+        if knockback_result.distance <= 0 or knockback_result.duration <= 0:
+            return False
+
         # 计算目标位置
         target_x = unit.x + \
             knockback_result.direction[0] * knockback_result.distance
@@ -377,7 +476,6 @@ class EnvironmentCollisionDetector:
         """判断瓦片是否为固体（不可通过）"""
         # 导入TileType枚举
         try:
-            from src.core.enums import TileType
             # 岩石和房间是固体
             if tile_type == TileType.ROCK:
                 return True
@@ -465,7 +563,6 @@ class EnvironmentCollisionDetector:
     def _get_collision_type(self, tile_type, tile_data) -> str:
         """获取碰撞类型"""
         try:
-            from src.core.enums import TileType
             if tile_type == TileType.ROCK:
                 return "wall"
             elif tile_type == TileType.ROOM:
@@ -674,8 +771,12 @@ class PhysicsSystem:
         unit.knockback_state.elapsed_time += delta_time
 
         # 计算击退进度 (使用缓动函数)
-        progress = unit.knockback_state.elapsed_time / unit.knockback_state.duration
-        progress = min(progress, 1.0)
+        # 防止除零错误：如果duration为0，直接完成击退
+        if unit.knockback_state.duration <= 0:
+            progress = 1.0
+        else:
+            progress = unit.knockback_state.elapsed_time / unit.knockback_state.duration
+            progress = min(progress, 1.0)
 
         # 应用缓动函数 (ease-out)
         eased_progress = 1.0 - (1.0 - progress) ** 3
@@ -740,8 +841,6 @@ class PhysicsSystem:
         """
         self.wall_collision_count += 1
 
-        print(f"💥 {unit.type} 撞到了 {collision_type}！位置: {collision_tile}")
-
         # 计算撞墙伤害
         original_knockback_distance = 0
         if unit.knockback_state:
@@ -758,8 +857,10 @@ class PhysicsSystem:
             old_health = unit.health
             unit.health -= wall_damage
             unit.health = max(0, unit.health)
-            print(
-                f"   💔 撞墙伤害: {wall_damage}, 剩余生命值: {unit.health}/{unit.max_health}")
+            # 只在伤害较大时输出日志
+            if wall_damage >= 3:
+                game_logger.info(
+                    f"💥 {unit.type} 撞墙受伤 {wall_damage} 点 (生命: {unit.health}/{unit.max_health})")
 
         # 触发撞墙视觉效果
         if hasattr(self, 'animation_manager') and self.animation_manager:
@@ -860,8 +961,9 @@ class PhysicsSystem:
         unit.knockback_state.duration = PhysicsConstants.KNOCKBACK_DURATION * 0.6  # 反弹时间较短
         unit.knockback_state.elapsed_time = 0.0
 
-        print(
-            f"   ↩️ 反弹距离: {bounce_distance:.1f}, 方向: ({bounce_direction[0]:.2f}, {bounce_direction[1]:.2f})")
+        # 只在反弹距离较大时输出日志
+        if bounce_distance >= 10:
+            game_logger.info(f"↩️ {unit.type} 反弹 {bounce_distance:.1f} 单位")
 
     def _stop_knockback(self, unit: Any):
         """停止击退"""
@@ -871,7 +973,7 @@ class PhysicsSystem:
         if hasattr(unit, 'can_attack'):
             unit.can_attack = True
         unit.knockback_state = None
-        print(f"   🛑 击退停止")
+        game_logger.info(f"   🛑 击退停止")
 
     def update_spatial_hash(self, units: List[Any]):
         """更新空间哈希表"""
@@ -968,7 +1070,250 @@ class PhysicsSystem:
         unit2.x, unit2.y = self.knockback_applier.check_boundaries(
             unit2.x, unit2.y)
 
-    def update(self, delta_time: float, units: List[Any] = None, game_map: List[List[Any]] = None):
+    def push_unit_out_of_building(self, unit: Any, building: Any, push_distance: float = None) -> bool:
+        """
+        将单位从建筑内部推出到建筑外部
+
+        Args:
+            unit: 需要推出的单位
+            building: 建筑对象
+            push_distance: 推出距离（可选，默认使用建筑大小）
+
+        Returns:
+            bool: 是否成功推出
+        """
+        if not self._is_unit_inside_building(unit, building):
+            game_logger.info(
+                f"🔍 {getattr(unit, 'name', unit.type)} 不在建筑内部，无需推出")
+            return False
+
+        # 计算建筑中心位置（将瓦片坐标转换为像素坐标）
+        if hasattr(building, 'x') and hasattr(building, 'y'):
+            building_size = getattr(building, 'size', 20)
+            if isinstance(building_size, (tuple, list)):
+                building_size = max(building_size)
+            building_size_pixels = building_size * GameConstants.TILE_SIZE
+            building_center_x = building.x * GameConstants.TILE_SIZE + building_size_pixels / 2
+            building_center_y = building.y * GameConstants.TILE_SIZE + building_size_pixels / 2
+        else:
+            return False
+
+        # 计算从建筑中心到单位的方向
+        dx = unit.x - building_center_x
+        dy = unit.y - building_center_y
+        distance = math.sqrt(dx * dx + dy * dy)
+
+        game_logger.info(f"🔍 推出计算:")
+        game_logger.info(
+            f"   建筑中心: ({building_center_x:.1f}, {building_center_y:.1f})")
+        game_logger.info(f"   单位位置: ({unit.x:.1f}, {unit.y:.1f})")
+        game_logger.info(f"   距离建筑中心: {distance:.1f}")
+
+        if distance == 0:
+            # 如果单位在建筑正中心，随机选择一个方向
+            angle = random.uniform(0, 2 * math.pi)
+            dx = math.cos(angle)
+            dy = math.sin(angle)
+            distance = 1.0
+            game_logger.info(f"   单位在建筑中心，使用随机方向: ({dx:.2f}, {dy:.2f})")
+
+        # 标准化方向向量
+        dx /= distance
+        dy /= distance
+        game_logger.info(f"   标准化方向: ({dx:.2f}, {dy:.2f})")
+
+        # 计算推出距离
+        if push_distance is None:
+            # 默认推出距离为建筑大小的一半加上单位碰撞半径
+            building_size = getattr(building, 'size', 20)
+
+            # 处理size可能是元组的情况
+            if isinstance(building_size, (tuple, list)):
+                building_size = max(building_size)  # 使用最大的尺寸
+
+            # 将建筑大小从瓦片转换为像素
+            building_size_pixels = building_size * GameConstants.TILE_SIZE
+
+            unit_radius = self.collision_detector.get_collision_radius(unit)
+            push_distance = building_size_pixels / 2 + unit_radius + 15  # 增加容错距离到15像素
+
+            game_logger.info(f"   建筑大小(瓦片): {building_size}")
+            game_logger.info(f"   建筑大小(像素): {building_size_pixels}")
+            game_logger.info(f"   建筑半径: {building_size_pixels / 2:.1f}")
+            game_logger.info(f"   单位半径: {unit_radius:.1f}")
+            game_logger.info(f"   计算推出距离: {push_distance:.1f}")
+
+        # 计算新位置
+        new_x = building_center_x + dx * push_distance
+        new_y = building_center_y + dy * push_distance
+        game_logger.info(f"   计算目标位置: ({new_x:.1f}, {new_y:.1f})")
+
+        # 边界检查
+        old_new_x, old_new_y = new_x, new_y
+        new_x, new_y = self.knockback_applier.check_boundaries(new_x, new_y)
+        if old_new_x != new_x or old_new_y != new_y:
+            game_logger.info(
+                f"   边界限制: ({old_new_x:.1f}, {old_new_y:.1f}) -> ({new_x:.1f}, {new_y:.1f})")
+
+        # 更新单位位置
+        old_x, old_y = unit.x, unit.y
+        unit.x = new_x
+        unit.y = new_y
+
+        # 验证推出后是否还在建筑内部
+        still_inside = self._is_unit_inside_building(unit, building)
+        game_logger.info(
+            f"🚪 推出结果: ({old_x:.1f}, {old_y:.1f}) -> ({new_x:.1f}, {new_y:.1f})")
+        game_logger.info(f"   推出后是否仍在建筑内: {still_inside}")
+
+        if still_inside:
+            game_logger.info(f"⚠️ 警告: 推出后单位仍在建筑内部！尝试强制推出...")
+            # 尝试强制推出到建筑边界外
+            self._force_push_out_of_building(unit, building)
+
+        return True
+
+    def _force_push_out_of_building(self, unit: Any, building: Any):
+        """强制将单位推出到建筑边界外"""
+
+        building_size = getattr(building, 'size', 20)
+        if isinstance(building_size, (tuple, list)):
+            building_size = max(building_size)
+        building_size_pixels = building_size * GameConstants.TILE_SIZE
+
+        # 计算建筑边界
+        building_left = building.x * GameConstants.TILE_SIZE
+        building_right = building_left + building_size_pixels
+        building_top = building.y * GameConstants.TILE_SIZE
+        building_bottom = building_top + building_size_pixels
+
+        unit_radius = self.collision_detector.get_collision_radius(unit)
+
+        game_logger.info(f"🔧 强制推出:")
+        game_logger.info(
+            f"   建筑边界: 左{building_left:.1f}, 右{building_right:.1f}, 上{building_top:.1f}, 下{building_bottom:.1f}")
+        game_logger.info(f"   单位半径: {unit_radius:.1f}")
+
+        # 计算到各边界的距离
+        distances = {
+            'left': unit.x - building_left + unit_radius + 10,
+            'right': building_right - unit.x + unit_radius + 10,
+            'top': unit.y - building_top + unit_radius + 10,
+            'bottom': building_bottom - unit.y + unit_radius + 10
+        }
+
+        game_logger.info(f"   到各边界距离: {distances}")
+
+        # 选择最短的推出方向
+        min_direction = min(distances.keys(), key=lambda k: distances[k])
+        min_distance = distances[min_direction]
+
+        game_logger.info(f"   选择方向: {min_direction}, 距离: {min_distance:.1f}")
+
+        old_x, old_y = unit.x, unit.y
+
+        if min_direction == 'left':
+            unit.x = building_left - unit_radius - 10
+        elif min_direction == 'right':
+            unit.x = building_right + unit_radius + 10
+        elif min_direction == 'top':
+            unit.y = building_top - unit_radius - 10
+        elif min_direction == 'bottom':
+            unit.y = building_bottom + unit_radius + 10
+
+        # 边界检查
+        unit.x, unit.y = self.knockback_applier.check_boundaries(
+            unit.x, unit.y)
+
+        still_inside = self._is_unit_inside_building(unit, building)
+        game_logger.info(
+            f"   强制推出: ({old_x:.1f}, {old_y:.1f}) -> ({unit.x:.1f}, {unit.y:.1f})")
+        game_logger.info(f"   强制推出后是否仍在建筑内: {still_inside}")
+
+        if still_inside:
+            game_logger.info(f"❌ 强制推出失败！单位仍在建筑内部！")
+
+    def _is_unit_inside_building(self, unit: Any, building: Any) -> bool:
+        """
+        检查单位是否在建筑内部
+
+        Args:
+            unit: 单位对象
+            building: 建筑对象
+
+        Returns:
+            bool: 单位是否在建筑内部
+        """
+        if not (hasattr(building, 'x') and hasattr(building, 'y')):
+            return False
+
+        # 获取建筑大小
+        building_size = getattr(building, 'size', 20)
+
+        # 处理size可能是元组的情况
+        if isinstance(building_size, (tuple, list)):
+            building_size = max(building_size)  # 使用最大的尺寸
+
+        # 将建筑大小从瓦片转换为像素
+        building_size_pixels = building_size * GameConstants.TILE_SIZE
+        building_radius = building_size_pixels / 2
+
+        # 将建筑的瓦片坐标转换为像素坐标
+        # 建筑的中心位置需要考虑建筑的大小
+        building_center_x = building.x * GameConstants.TILE_SIZE + building_size_pixels / 2
+        building_center_y = building.y * GameConstants.TILE_SIZE + building_size_pixels / 2
+
+        # 计算单位到建筑中心的距离
+        dx = unit.x - building_center_x
+        dy = unit.y - building_center_y
+        distance = math.sqrt(dx * dx + dy * dy)
+
+        # 获取单位碰撞半径
+        unit_radius = self.collision_detector.get_collision_radius(unit)
+
+        # 如果单位中心到建筑中心的距离小于建筑半径，认为在内部
+        return distance < building_radius
+
+    def check_and_resolve_building_collisions(self, units: List[Any], buildings: List[Any]):
+        """
+        检查并解决单位与建筑的碰撞，将困在建筑内的单位推出
+
+        Args:
+            units: 单位列表
+            buildings: 建筑列表
+        """
+        for unit in units:
+            # 跳过已死亡的单位
+            if hasattr(unit, 'health') and unit.health <= 0:
+                continue
+
+            # 跳过建筑物（建筑物之间不相互推出）
+            if hasattr(unit, 'building_type') or hasattr(unit, 'is_building'):
+                continue
+
+            # 记录单位是否被推出，避免重复处理
+            unit_pushed = False
+
+            for building in buildings:
+                # 跳过已销毁的建筑
+                if hasattr(building, 'health') and building.health <= 0:
+                    continue
+
+                # 如果单位已经被推出，跳过后续建筑检查
+                if unit_pushed:
+                    break
+
+                # 检查单位是否在建筑内部
+                if self._is_unit_inside_building(unit, building):
+                    # 将单位推出建筑
+                    success = self.push_unit_out_of_building(unit, building)
+                    if success:
+                        unit_pushed = True
+                        game_logger.info(
+                            f"✅ {getattr(unit, 'name', unit.type)} 已从建筑中推出")
+                        break  # 一次只处理一个建筑碰撞
+
+    def update(self, delta_time: float, units: List[Any] = None, game_map: List[List[Any]] = None, buildings: List[Any] = None):
         """
         更新物理系统
 
@@ -976,6 +1321,7 @@ class PhysicsSystem:
             delta_time: 时间增量（秒）
             units: 单位列表（可选，用于碰撞检测）
             game_map: 游戏地图（可选，用于环境碰撞检测）
+            buildings: 建筑列表（可选，用于建筑碰撞检测）
         """
         # 更新击退效果（包含环境碰撞检测）
         self.update_knockbacks(delta_time, game_map)
@@ -985,6 +1331,10 @@ class PhysicsSystem:
             collisions = self.detect_collisions(units)
             for unit1, unit2 in collisions:
                 self.resolve_collision(unit1, unit2)
+
+        # 如果提供了建筑列表，检查并解决单位与建筑的碰撞
+        if units and buildings:
+            self.check_and_resolve_building_collisions(units, buildings)
 
     def get_performance_stats(self) -> Dict[str, int]:
         """获取性能统计信息"""
